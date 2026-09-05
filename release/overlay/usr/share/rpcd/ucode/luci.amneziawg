@@ -140,6 +140,24 @@ function autoResources(value) {
 	return length(values) ? values : [ 'youtube.com' ];
 }
 
+function autoResolvers(value) {
+	let values = [];
+	if (type(value) == 'string')
+		value = split(value, /[\s,]+/);
+	if (type(value) != 'array')
+		return [ '1.1.1.1', '8.8.8.8', '9.9.9.9', '77.88.8.8', '77.88.8.1' ];
+	for (let item in value) {
+		item = trim('' + item);
+		if (match(item, /^[0-9.]+$|^[0-9a-fA-F:]+$/) && length(values) < 8) {
+			let duplicate = false;
+			for (let seen in values)
+				if (seen == item) duplicate = true;
+			if (!duplicate) push(values, item);
+		}
+	}
+	return length(values) ? values : [ '1.1.1.1', '8.8.8.8', '9.9.9.9', '77.88.8.8', '77.88.8.1' ];
+}
+
 function autoSourceUrl(value) {
 	value = trim(value ?? '');
 	if (lc(substr(value, 0, 8)) != 'https://')
@@ -384,6 +402,7 @@ function runtimeHealthCheck(mode, iface) {
 	let timeout = 10;
 	let resources = [ 'youtube.com' ];
 	let attempts = 2;
+	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
 	mode = autoHealthMode(mode, 'strict');
 	const uci = cursor();
 	if (uci.load(AUTO_CONFIG)) {
@@ -393,12 +412,13 @@ function runtimeHealthCheck(mode, iface) {
 			attempts = 1 + autoNumber(main.health_retries, 1, 0, 4);
 			const parsed = autoResources(main.critical_resource ?? [ 'youtube.com' ]);
 			if (parsed) resources = parsed;
+			resolvers = join(' ', autoResolvers(main.health_resolvers));
 		}
 	}
 	/* netifd and the policy proxy may lag the interface by a few seconds. */
 	let result = 'no health-check result';
 	for (let attempt = 0; attempt < attempts; attempt++) {
-		result = command(`sleep 2; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ','))} ${mode} 2>/dev/null`);
+		result = command(`sleep 2; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ','))} ${mode} ${shellquote(resolvers)} 2>/dev/null`);
 		if (match(result, /^OK [0-9]+$/))
 			return { ok: true, detail: result };
 	}
@@ -455,7 +475,13 @@ function autoProbeCandidate(id, timeout) {
 	const parsed = parseAwgConfig(text, `${id}.conf`);
 	if (!parsed.ok) return failure('Candidate configuration is invalid');
 	timeout = autoNumber(timeout, 10, 3, 30);
-	const result = command(`/usr/libexec/awg-warp-auto/candidate-test.sh ${shellquote(autoPath(id))} ${timeout} 2>/dev/null`);
+	const uci = cursor();
+	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	if (uci.load(AUTO_CONFIG)) {
+		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
+		if (main) resolvers = join(' ', autoResolvers(main.health_resolvers));
+	}
+	const result = command(`/usr/libexec/awg-warp-auto/candidate-test.sh ${shellquote(autoPath(id))} ${timeout} 51822 ${shellquote(resolvers)} 2>/dev/null`);
 	if (!match(result, /^OK [0-9]+$/)) return failure('Candidate YouTube probe failed');
 	return { ok: true, latency_ms: +substr(result, 3) };
 }
@@ -465,7 +491,13 @@ function autoHealth(timeout, resources, mode) {
 	resources = autoResources(resources);
 	mode = autoHealthMode(mode, 'strict');
 	if (!resources) return failure('Invalid critical resource list');
-	const result = command(`/usr/libexec/awg-warp-auto/health-check.sh ${shellquote(targetInterface())} ${timeout} ${shellquote(join(resources, ','))} ${mode} 2>/dev/null`);
+	const uci = cursor();
+	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	if (uci.load(AUTO_CONFIG)) {
+		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
+		if (main) resolvers = join(' ', autoResolvers(main.health_resolvers));
+	}
+	const result = command(`/usr/libexec/awg-warp-auto/health-check.sh ${shellquote(targetInterface())} ${timeout} ${shellquote(join(resources, ','))} ${mode} ${shellquote(resolvers)} 2>/dev/null`);
 	if (!match(result, /^OK [0-9]+$/)) return failure('Active YouTube health check failed');
 	return { ok: true, latency_ms: +substr(result, 3) };
 }
@@ -496,7 +528,8 @@ function autoStatus() {
 		failure_threshold: autoNumber(main.failure_threshold, 3, 1, 10),
 		health_mode: autoHealthMode(main.health_mode, topology.state == 'missing' ? 'direct' : 'strict'),
 		log_level: autoLogLevel(main.log_level, 'info'),
-		critical_resource: autoResources(main.critical_resource ?? [ 'youtube.com' ]) ?? [ 'youtube.com' ]
+		critical_resource: autoResources(main.critical_resource ?? [ 'youtube.com' ]) ?? [ 'youtube.com' ],
+		health_resolvers: join(' ', autoResolvers(main.health_resolvers))
 	};
 	const pool = [];
 	let active_health = '';
@@ -520,6 +553,10 @@ function autoStatus() {
 			latency_ms: autoNumber(entry.latency_ms, 0, 0, 120000),
 			failure_count,
 			blacklist_until: autoNumber(entry.blacklist_until, 0, 0, 4294967295),
+			source_provider: entry.source_provider ?? 'unknown',
+			endpoint_source: entry.endpoint_source ?? '',
+			source_url: entry.source_url ?? '',
+			last_error: entry.last_error ?? '',
 			active: is_active
 		});
 	});
@@ -574,7 +611,8 @@ function saveAutoSettings(settings, defer_service) {
 		health_timeout: '' + autoNumber(settings.health_timeout, 10, 3, 30),
 		failure_threshold: '' + autoNumber(settings.failure_threshold, 3, 1, 10),
 		health_mode: autoHealthMode(settings.health_mode, 'strict'),
-		log_level: autoLogLevel(settings.log_level, 'info')
+		log_level: autoLogLevel(settings.log_level, 'info'),
+		health_resolvers: join(' ', autoResolvers(settings.health_resolvers))
 	};
 	const uci = cursor();
 	uci.load(AUTO_CONFIG);
@@ -681,6 +719,7 @@ const methods = {
 			else if (action == 'test_all') command_line = '/usr/libexec/awg-warp-auto/daemon.sh test_all';
 			else if (action == 'rollback') command_line = '/usr/libexec/awg-warp-auto/daemon.sh rollback';
 			else if (action == 'native_test') command_line = '/usr/libexec/awg-warp-auto/daemon.sh native_test';
+			else if (action == 'force_replenish') command_line = '/usr/libexec/awg-warp-auto/daemon.sh force_replenish';
 			else if (action == 'retest' && validAutoId(id)) command_line = `/usr/libexec/awg-warp-auto/daemon.sh retest ${id}`;
 			else if (action == 'bootstrap') {
 				const status = cursor();

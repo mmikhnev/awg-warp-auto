@@ -315,6 +315,7 @@ prune_pool() {
 	done
 
 	[ "$pool_pruned" = 1 ] && { commit; log info "pool pruned to $(entry_count) profiles"; }
+	return 0
 }
 
 generate_candidates() {
@@ -353,14 +354,22 @@ generate_candidates() {
 # Phase-one native registrar: one deliberate operator request only. It reuses
 # pool staging and isolated YouTube probing; it never activates or replenishes.
 native_test_unlocked() {
-	native_replenish 1
+	native_replenish 1 1
+}
+
+force_replenish_unlocked() {
+	if [ "$(provider_name)" = native ]; then
+		native_replenish 1 1
+	else
+		refresh_unlocked
+	fi
 }
 
 # Each registration is budgeted persistently before the network request. The
 # same fresh device is tried against rotated endpoints; only its winning
 # profile remains, so candidate probes never reuse an ACTIVE device's key.
 native_replenish() {
-	local manual=${1:-0} minimum ready need batch next current last_attempt emergency endpoints cursor endpoint ordered mode
+	local manual=${1:-0} force=${2:-0} minimum ready need batch next current last_attempt emergency endpoints cursor endpoint ordered mode
 	local attempt result path id candidate success=0 count offset auto_ok
 	prepare_dirs || return 1
 	minimum=$(bounded "$(option minimum_ready)" 2 1 8)
@@ -377,13 +386,18 @@ native_replenish() {
 	[ "$ready" -eq 0 ] && safe_id "$(option active_id)" && emergency=1
 	last_attempt=$(number "$(option native_last_attempt)" 0)
 	if [ "$current" -lt "$next" ]; then
-		[ "$emergency" = 1 ] && [ $((current - last_attempt)) -ge 60 ] || {
-			log debug '[native] registration budget/backoff active'
-			return 0
-		}
-		log warning '[native] emergency replenishment after empty failover pool'
+		if [ "$force" = 1 ] && [ $((current - last_attempt)) -ge 30 ]; then
+			log info '[native] manual force replenishment requested (cooldown satisfied)'
+		else
+			[ "$emergency" = 1 ] && [ $((current - last_attempt)) -ge 60 ] || {
+				log debug '[native] registration budget/backoff active'
+				return 0
+			}
+			log warning '[native] emergency replenishment after empty failover pool'
+		fi
 	fi
 	batch=$(bounded "$(option native_batch_limit)" 2 1 2)
+	[ "$manual" = 1 ] && batch=1
 	[ "$need" -le "$batch" ] || need=$batch
 	set_main native_last_attempt "$current"
 	set_main native_next_attempt "$((current + $(bounded "$(option native_min_interval)" 900 60 86400)))"
@@ -682,5 +696,6 @@ case "${1:-run}" in
 	rollback) with_lock rollback_unlocked ;;
 	failover) with_lock failover_and_replenish ;;
 	native_test) with_lock native_test_unlocked ;;
-	*) echo "Usage: $0 {run|cycle|refresh|test_all|bootstrap|native_test|retest ID|activate ID|rollback|failover}" >&2; exit 2 ;;
+	force_replenish) with_lock force_replenish_unlocked ;;
+	*) echo "Usage: $0 {run|cycle|refresh|test_all|bootstrap|native_test|force_replenish|retest ID|activate ID|rollback|failover}" >&2; exit 2 ;;
 esac

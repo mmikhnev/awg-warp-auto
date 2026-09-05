@@ -12,19 +12,22 @@
 
 ## P1 — production hardening
 
+- [x] UI: when target interface is unmanaged and active pool pointer is cleared,
+  hide/disable “Download active profile” instead of showing a dead action. (Реализовано)
+- [x] Revisit health destination policy: добавлен конфигурируемый список DNS-резолверов
+  (`health_resolvers` в UCI, UI Settings, candidate-test.sh и health-check.sh,
+  default: 1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1). (Реализовано)
+- [x] Добавить automated integration test, который моделирует recovery, stale rule cleanup,
+  empty pool emergency replenish и force refresh cooldown: добавлен
+  `source/luci-proto-amneziawg/tests/extended-integration-test.sh`. (Реализовано)
+- [x] Rollback & deployment tooling: автоматические скрипты удаленного резервного копирования
+  (`scripts/router-backup.sh`), отката (`scripts/router-rollback.sh`) и безопасного
+  развертывания (`scripts/deploy-to-router.sh`) без перезагрузки сетевого стека или Forkop.
 - Сделать настоящие OpenWrt 25 `apk` packages из matching SDK/feed, а не
   только overlay installer. Нужны versioning, architecture metadata,
   dependencies и upgrade test.
 - Проверить installer на APK firmware: `apk update/add`, availability feeds,
   matching `kmod-amneziawg`, then LuCI cache/rpcd/procd restart.
-- Добавить automated integration test, который моделирует interrupted probe,
-  all-DNS failure, empty pool and restart recovery.
-- Revisit health destination policy: public DNS fallback повышает устойчивость,
-  но если провайдер блокирует все три resolver, profile remains correctly
-  unverified. Возможный следующий шаг — configurable resolver list или
-  pinned, verified resolver endpoint; не ослаблять YouTube/transfer gate.
-- UI: when target interface is unmanaged and active pool pointer is cleared,
-  hide/disable “Download active profile” instead of showing a dead action.
 
 ## P2 — QUIC/I1
 
@@ -37,12 +40,16 @@
 
 ## P3 — observability / product polish
 
-- Add profile provenance column or details dialog: provider, endpoint source,
-  registration time, last exact failure class — without exposing keys.
+- [x] Add profile provenance column or details dialog: provider, endpoint source,
+  registration time, last exact failure class — without exposing keys. (Реализовано:
+  модальное окно «Details», кликабельный профиль, экспорт в ucode RPC).
+- [x] Add an explicit “manual refresh bypasses normal wait once” UX, protected by
+  a cooldown, rather than requiring UCI intervention for emergency debugging.
+  (Реализовано: `force_replenish` с 30-секундным cooldown в daemon.sh, RPC и кнопка в UI).
+- [x] UI visual polish: цветовые бейджи для статусов профилей (ACTIVE, READY, FAILED, NEW)
+  и состояния здоровья (Health: OK/FAIL), адаптивные стили табов.
 - Bound and rotate logs at explicit size; current LuCI log display is capped,
   but system log retention belongs to firmware configuration.
-- Add an explicit “manual refresh bypasses normal wait once” UX, protected by
-  a cooldown, rather than requiring UCI intervention for emergency debugging.
 
 ## Security constraints to preserve
 

@@ -68,3 +68,21 @@ stored `.conf`, а normal Native rate-limit задерживал refill. Исп�
    network interface.
 3. Empty READY pool включает bounded emergency refill.
 4. DNS и stale probe rule больше не должны давать этот ложный каскад.
+
+## Обновления от 2026-09-05 (вечер)
+
+1. **Конфигурируемый DNS-резолвер**:
+   - `health_resolvers` вынесен в UCI и LuCI UI Settings.
+   - По умолчанию используются `1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1`.
+   - Резолверы передаются в `candidate-test.sh` и `health-check.sh`.
+2. **UI & Provenance**:
+   - Бейджи состояний: `ACTIVE` (зеленый), `READY` (синий), `FAILED` (красный), `NEW` (нейтральный), Health `OK`/`FAIL`.
+   - Модальное окно детализации «Details» по профилю: провайдер (Native Cloudflare / Remote / Custom), источник эндпоинта, временные метки, последняя ошибка (без раскрытия приватных ключей).
+   - Кнопка «Download active profile» корректно отключается/скрывается при отсутствии активного или неуправляемом интерфейсе.
+   - Убраны жестко зашитые цвета табов, применен адаптивный LuCI theme style.
+3. **Ручное форсированное пополнение (Force replenish)**:
+   - Добавлено действие `force_replenish` с защитным 30-секундным cooldown против флуда API Cloudflare.
+4. **Автоматизация и безопасность стенда**:
+   - Созданы `scripts/router-backup.sh`, `scripts/router-rollback.sh` и `scripts/deploy-to-router.sh`.
+   - Развертывание проверено на живом стенде: Forkop и активные соединения не перезапускались, рабочий канал сохранен.
+   - Создан расширенный офлайн набор тестов `source/luci-proto-amneziawg/tests/extended-integration-test.sh`.

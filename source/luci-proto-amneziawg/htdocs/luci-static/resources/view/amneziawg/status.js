@@ -137,6 +137,64 @@ function handlePeerDetails(peer) {
 	]);
 }
 
+
+function renderStatusBadge(status) {
+	status = String(status || '-').toUpperCase();
+	var badgeClass = 'cbi-badge';
+	if (status === 'ACTIVE') badgeClass += ' cbi-badge-positive';
+	else if (status === 'READY') badgeClass += ' cbi-badge-info';
+	else if (status === 'FAILED') badgeClass += ' cbi-badge-negative';
+	else badgeClass += ' cbi-badge-neutral';
+	return E('span', { 'class': badgeClass, 'style': 'font-weight:600; padding:2px 8px; border-radius:3px;' }, [ status ]);
+}
+
+function renderHealthBadge(health) {
+	if (!health || health === '-') return E('span', [ '-' ]);
+	var badgeClass = 'cbi-badge';
+	if (health === 'OK' || health === 'running') badgeClass += ' cbi-badge-positive';
+	else if (health === 'FAIL' || health === 'failed' || health === 'stopped') badgeClass += ' cbi-badge-negative';
+	else badgeClass += ' cbi-badge-neutral';
+	return E('span', { 'class': badgeClass, 'style': 'font-weight:600; padding:2px 8px; border-radius:3px;' }, [ health ]);
+}
+
+function handleProfileDetails(entry) {
+	var createdStr = autoTimestampToStr(entry.created_at);
+	var testedStr = autoTimestampToStr(entry.last_test);
+	var healthStr = autoTimestampToStr(entry.last_health);
+	var providerStr = entry.source_provider === 'native' ? _('Native (Cloudflare API)') :
+	                  entry.source_provider === 'remote' ? _('Remote') : (entry.source_provider || '-');
+	var epSourceStr = entry.endpoint_source === 'cloudflare_registration' ? _('Cloudflare Registration API') :
+	                  entry.endpoint_source === 'custom' ? _('Custom Endpoint Pool') : (entry.endpoint_source || '-');
+
+	var items = [
+		_('Profile ID'), entry.id,
+		_('Profile Name'), entry.profile || entry.id,
+		_('Status'), renderStatusBadge(entry.status),
+		_('Provider'), providerStr,
+		_('Endpoint'), entry.endpoint || '-',
+		_('Endpoint Source'), epSourceStr,
+		_('Created'), createdStr,
+		_('Last Probe'), testedStr,
+		_('Last Health Check'), healthStr,
+		_('Latency'), (entry.latency_ms != null ? entry.latency_ms + ' ms' : '-'),
+		_('Consecutive Failures'), String(entry.failure_count || 0)
+	];
+
+	if (entry.last_error) {
+		items.push(_('Last Error'), E('span', { 'style': 'color:#c0392b; font-weight:bold;' }, [ String(entry.last_error).replace(/_/g, ' ') ]));
+	}
+
+	ui.showModal(_('Profile Details'), [
+		ui.itemlist(E([]), items),
+		E('div', { 'class': 'right' }, [
+			E('button', {
+				'class': 'btn cbi-button',
+				'click': ui.hideModal
+			}, [ _('Dismiss') ])
+		])
+	]);
+}
+
 function renderPeerTable(instanceName, peers) {
 	var t = new L.ui.Table(
 		[
@@ -200,7 +258,8 @@ return view.extend({
 
 			tab.panel.style.display = active ? '' : 'none';
 			tab.item.classList.toggle('cbi-tab', active);
-			tab.link.style.color = active ? '#2ea3d3' : '#c5c5c5';
+			tab.item.classList.toggle('cbi-tab-disabled', !active);
+			tab.link.style.fontWeight = active ? 'bold' : 'normal';
 		}, this));
 		if (this.warpTabHeading && this.warpTabs[name])
 			dom.content(this.warpTabHeading, [ _('WARP Auto') + ' - ' + this.warpTabs[name].title ]);
@@ -216,10 +275,10 @@ return view.extend({
 				'class': 'cbi-section',
 				'style': index ? 'display:none' : ''
 			}, tab.content);
-			var item = E('li', { 'class': index ? '' : 'cbi-tab' });
+			var item = E('li', { 'class': index ? 'cbi-tab-disabled' : 'cbi-tab' });
 			var link = E('a', {
 				'href': '#',
-				'style': 'color:' + (index ? '#c5c5c5' : '#2ea3d3'),
+				'style': index ? '' : 'font-weight:bold',
 				'click': L.bind(function(event) {
 					event.preventDefault();
 					this.switchWarpTab(tab.id);
@@ -300,7 +359,8 @@ return view.extend({
 			health_timeout: Math.floor(numberValue(fields.health_timeout.value, 10)),
 			health_mode: fields.health_mode.checked ? 'strict' : 'direct',
 			log_level: fields.log_level.value,
-			critical_resource: resources
+			critical_resource: resources,
+			health_resolvers: String(fields.health_resolvers ? fields.health_resolvers.value : '').trim() || '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1'
 		};
 	},
 
@@ -339,6 +399,8 @@ return view.extend({
 		fields.critical_resource.value = resources.filter(function(value) {
 			return String(value).trim().length;
 		}).join('\n') || 'youtube.com';
+		if (fields.health_resolvers)
+			fields.health_resolvers.value = settings.health_resolvers || '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
 		this.updateProviderFields();
 	},
 
@@ -433,12 +495,17 @@ return view.extend({
 		if (bootstrapError)
 			bootstrapState += ': ' + bootstrapError.replace(/_/g, ' ');
 
+		var hasActive = active && active !== '-' && active !== '' && interfaceState !== _('not created');
+		var activeProfileNode = hasActive
+			? E('span', [ String(active), ' ', this.profileDownload('active', _('Download active profile')) ])
+			: E('span', [ E('em', [ _('none') ]) ]);
+
 		dom.content(this.autoRuntimeNode, ui.itemlist(E([]), [
-			_('Service'), String(service || '-'),
+			_('Service'), renderHealthBadge(service),
 			_('WARP interface'), String(interfaceState || '-'),
 			_('Initial setup'), String(bootstrapState || '-'),
-			_('Active profile'), E('span', [ String(active || '-'), ' ', this.profileDownload('active', _('Download active profile')) ]),
-			_('Health'), String(health || '-'),
+			_('Active profile'), activeProfileNode,
+			_('Health'), renderHealthBadge(health),
 			_('Last health check'), autoTimestampToStr(lastHealth),
 			_('Consecutive failures'), failures == null ? '-' : String(failures),
 			_('Last refresh'), autoTimestampToStr(refreshed)
@@ -473,9 +540,28 @@ return view.extend({
 			}
 			actions.push(this.profileDownload(id));
 
+			var detailsBtn = E('button', {
+				'class': 'btn cbi-button',
+				'click': L.bind(function(event) {
+					event.preventDefault();
+					handleProfileDetails(entry);
+				}, this)
+			}, [ _('Details') ]);
+			actions.push(' ', detailsBtn);
+
+			var profileLink = E('a', {
+				'href': '#',
+				'style': 'font-weight:600; cursor:pointer;',
+				'title': _('Click for details'),
+				'click': L.bind(function(ev) {
+					ev.preventDefault();
+					handleProfileDetails(entry);
+				}, this)
+			}, [ String(profile) ]);
+
 			return E('tr', [
-				E('td', [ String(profile) ]),
-				E('td', [ status ]),
+				E('td', [ profileLink ]),
+				E('td', [ renderStatusBadge(status) ]),
 				E('td', [ String(endpoint) ]),
 				E('td', [ lastTest ]),
 				E('td', [ latency ]),
@@ -576,6 +662,7 @@ return view.extend({
 			activate: _('Activating selected profile…'),
 			retest: _('Retesting profile…'),
 			native_test: _('Generating and testing Native profile…'),
+			force_replenish: _('Replenishing profile pool (force)…'),
 			rollback: _('Rolling back profile…'),
 			bootstrap: _('Creating and testing WARP interface…')
 		};
@@ -684,6 +771,10 @@ return view.extend({
 		var failureThreshold = makeInput('failure_threshold', 'number', { 'min': 1, 'step': 1 });
 		var healthTimeout = makeInput('health_timeout', 'number', { 'min': 1, 'step': 1 });
 		var strictHealth = makeInput('health_mode', 'checkbox', { 'class': 'cbi-input-checkbox' });
+		var healthResolvers = makeInput('health_resolvers', 'text', {
+			'placeholder': '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1',
+			'style': 'width:100%; max-width:40em'
+		});
 		var logLevel = E('select', { 'class': 'cbi-input-select', 'name': 'log_level' }, [
 			E('option', { 'value': 'error' }, [ _('Error only') ]),
 			E('option', { 'value': 'warning' }, [ _('Warnings and errors') ]),
@@ -724,6 +815,13 @@ return view.extend({
 				return this.runWarpAutoAction('native_test');
 			}, this)
 		}, [ _('Generate test profile') ]);
+		var forceButton = E('button', {
+			'class': 'btn cbi-button cbi-button-action',
+			'click': L.bind(function(event) {
+				event.preventDefault();
+				return this.runWarpAutoAction('force_replenish');
+			}, this)
+		}, [ _('Force replenish') ]);
 		var rollbackButton = E('button', {
 			'class': 'btn cbi-button cbi-button-negative',
 			'click': L.bind(function(event) {
@@ -749,7 +847,7 @@ return view.extend({
 		this.autoFields.log_level = logLevel;
 		this.autoSaveButton = saveButton;
 		this.autoBootstrapButton = bootstrapButton;
-		this.autoActionButtons = [ bootstrapButton, refreshButton, testButton, generateButton, rollbackButton ];
+		this.autoActionButtons = [ bootstrapButton, refreshButton, testButton, generateButton, forceButton, rollbackButton ];
 		this.autoMessageNode = E('span', { 'style': 'margin-left:1em' });
 		this.autoRuntimeNode = E('div', [ E('em', [ _('Loading WARP Auto status…') ]) ]);
 		this.autoPoolNode = E('div', [ E('em', [ _('Loading WARP Auto pool…') ]) ]);
@@ -779,7 +877,7 @@ return view.extend({
 					this.autoRuntimeNode,
 					E('h3', [ _('Profile pool') ]),
 					this.autoPoolNode,
-					E('div', { 'class': 'cbi-page-actions' }, [ refreshButton, ' ', testButton, ' ', rollbackButton ])
+					E('div', { 'class': 'cbi-page-actions' }, [ refreshButton, ' ', testButton, ' ', forceButton, ' ', rollbackButton ])
 				]
 			},
 			{
@@ -804,6 +902,7 @@ return view.extend({
 					makeRow(_('Failure threshold'), failureThreshold, _('consecutive failed checks; default 3')),
 					makeRow(_('Health-check timeout'), healthTimeout, _('seconds; default 10')),
 					makeRow(_('Verify current Forkop/policy route'), strictHealth, _('Leave off on a bare router. Turn on after selected traffic is routed through Forkop.')),
+					makeRow(_('Health-check DNS resolvers'), healthResolvers, _('Space-separated DNS resolvers for isolated candidate and health tests.')),
 					makeRow(_('Log level'), logLevel, _('Important events by default. Select Debug only when diagnosing.')),
 					makeRow(_('Critical resources'), critical, _('One hostname per line. youtube.com remains the default health target.')),
 					E('div', { 'class': 'cbi-page-actions' }, [ saveButton ]),

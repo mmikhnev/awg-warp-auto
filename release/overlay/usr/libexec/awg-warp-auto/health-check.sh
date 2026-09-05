@@ -8,6 +8,7 @@ IFACE=${1:-awg_warp}
 TIMEOUT=${2:-10}
 RESOURCES=${3:-youtube.com}
 MODE=${4:-strict}
+RESOLVERS=${5:-}
 
 case "$IFACE" in ''|[!A-Za-z]*|*[!A-Za-z0-9_]* ) echo 'FAIL interface'; exit 1 ;; esac
 [ "${#IFACE}" -le 15 ] || { echo 'FAIL interface'; exit 1; }
@@ -56,7 +57,8 @@ fi
 # Local proxy DNS can supply Fake-IP, so resolve a real public address for
 # the interface-bound proof. This does not change DNS settings or routing.
 yt_ip=''
-for dns in 1.1.1.1 8.8.8.8 9.9.9.9; do
+resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
+for dns in $resolvers_list; do
 	yt_ip=$(nslookup www.youtube.com "$dns" 2>/dev/null | awk '
 		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
 		/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
