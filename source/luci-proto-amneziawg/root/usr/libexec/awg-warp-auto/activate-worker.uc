@@ -197,7 +197,10 @@ function parseAwgConfig(text, filename) {
 		privatekey: true, address: true, dns: true, mtu: true, listenport: true,
 		s1: true, s2: true, s3: true, s4: true, jc: true, jmin: true, jmax: true,
 		h1: true, h2: true, h3: true, h4: true,
-		i1: true, i2: true, i3: true, i4: true, i5: true
+		i1: true, i2: true, i3: true, i4: true, i5: true,
+		contentpaddingaddition: true, rekeyaftertime: true, rekeytimeout: true,
+		rejectaftertime: true, keepalivetimeout: true, maxhandshakeattempts: true,
+		randomtrailers: true, disablecookies: true
 	};
 	const allowedPeer = {
 		publickey: true, presharedkey: true, allowedips: true, endpoint: true,
@@ -208,10 +211,7 @@ function parseAwgConfig(text, filename) {
 	for (let key in sections.peer)
 		if (!allowedPeer[key]) return { ok: false, error: `Unsupported Peer option ${key}` };
 
-	const requiredInterface = [
-		'privatekey', 'address', 'mtu', 's1', 's2', 's3', 's4',
-		'jc', 'jmin', 'jmax', 'h1', 'h2', 'h3', 'h4'
-	];
+	const requiredInterface = [ 'privatekey', 'address' ];
 	const requiredPeer = [ 'publickey', 'allowedips', 'endpoint' ];
 	for (let key in requiredInterface)
 		if (!sections.interface[key]) return { ok: false, error: `Missing Interface option ${key}` };
@@ -370,7 +370,9 @@ uci.set("network", iface, "listen_port", "51821");
 uci.set("network", iface, "fwmark", "0x01000000");
 uci.set("network", iface, "mtu", parsed.interface.mtu);
 uci.set("network", iface, "addresses", parsed.addresses);
-for (let field in [ "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5" ])
+for (let field in [ "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5",
+                    "contentpaddingaddition", "rekeyaftertime", "rekeytimeout", "rejectaftertime", "keepalivetimeout", "maxhandshakeattempts",
+                    "randomtrailers", "disablecookies" ])
 	if (parsed.interface[field] != null) uci.set("network", iface, `awg_${field}`, parsed.interface[field]);
 
 uci.set("network", managedPeer, `amneziawg_${iface}`);
