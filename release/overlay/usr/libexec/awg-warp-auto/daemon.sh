@@ -52,6 +52,19 @@ entry() { safe_id "$1" || return 1; uci -q get "$CONFIG.$1.$2" 2>/dev/null || tr
 entries() { uci -q show "$CONFIG" 2>/dev/null | sed -n "s/^$CONFIG\.\([A-Za-z0-9_]*\)=entry$/\1/p"; }
 entry_file() { printf '%s/%s.conf' "$POOL" "$1"; }
 
+sorted_ready_entries() {
+	local id lat current active
+	active=$(option active_id)
+	current=$(now)
+	for id in $(entries); do
+		[ "$id" = "$active" ] && continue
+		[ "$(entry "$id" status)" = READY ] || continue
+		[ "$(number "$(entry "$id" blacklist_until)" 0)" -le "$current" ] || continue
+		lat=$(number "$(entry "$id" latency_ms)" 9999)
+		echo "$lat $id"
+	done | sort -k1,1n | awk '{print $2}'
+}
+
 number() {
 	case "${1:-}" in *[!0-9]*|'') printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac
 }
@@ -737,8 +750,7 @@ bootstrap_unlocked() {
 			test_candidates new
 		fi
 	fi
-	for id in $(entries); do
-		[ "$(entry "$id" status)" = READY ] || continue
+	for id in $(sorted_ready_entries); do
 		if activate_one "$id" direct; then
 			set_main last_bootstrap "$(now)"
 			set_bootstrap_state ready
@@ -807,10 +819,7 @@ failover_unlocked() {
 	cooldown=$(number "$(option failover_cooldown)" 10)
 	last=$(number "$(option last_failover)" 0)
 	[ $((current - last)) -ge "$cooldown" ] || { log info 'failover cooldown active'; return 1; }
-	for id in $(entries); do
-		[ "$id" = "$active" ] && continue
-		[ "$(entry "$id" status)" = READY ] || continue
-		[ "$(number "$(entry "$id" blacklist_until)" 0)" -le "$current" ] || continue
+	for id in $(sorted_ready_entries); do
 		if test_one "$id" && activate_one "$id"; then
 			set_main last_failover "$current"
 			commit
@@ -821,9 +830,7 @@ failover_unlocked() {
 	done
 	log warning 'no READY candidate survived failover test; rebuilding pool'
 	refresh_unlocked || true
-	for id in $(entries); do
-		[ "$id" = "$active" ] && continue
-		[ "$(entry "$id" status)" = READY ] || continue
+	for id in $(sorted_ready_entries); do
 		test_one "$id" && activate_one "$id" && { set_main last_failover "$current"; commit; return 0; }
 	done
 	return 1

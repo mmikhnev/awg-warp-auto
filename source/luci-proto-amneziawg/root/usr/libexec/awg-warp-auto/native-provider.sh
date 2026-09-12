@@ -137,12 +137,7 @@ if [ -z "$valid_ports" ]; then
 	exit 1
 fi
 
-candidates=''
-for p in $valid_ports; do
-	candidates="${candidates:+${candidates} }${v4_ip}:${p}"
-done
-
-logger -p user.notice -t awg-warp-auto "native registration: v4=$v4_ip ports=$valid_ports candidates=$candidates"
+first_port=$(printf '%s' "$valid_ports" | awk '{print $1}')
 
 if [ -n "$explicit_endpoint" ]; then
 	case "$explicit_endpoint" in
@@ -154,13 +149,32 @@ if [ -n "$explicit_endpoint" ]; then
 			ep_port=${explicit_endpoint##*:}
 			[ "$ep_port" -ge 1 ] 2>/dev/null && [ "$ep_port" -le 65535 ] 2>/dev/null || exit 1
 			endpoint="$explicit_endpoint"
+			candidates="$explicit_endpoint"
 			;;
 		*) exit 1 ;;
 	esac
 else
-	first_port=$(printf '%s' "$valid_ports" | awk '{print $1}')
-	endpoint="${v4_ip}:${first_port}"
+	# Fast Cloudflare Anycast subnets and ports for latency and block evasion
+	rnd_anycast_candidates() {
+		# 1. Registered endpoint from Cloudflare API
+		echo "${v4_ip}:${first_port}"
+
+		# 2. Random hosts across verified fast Cloudflare Anycast subnets
+		local prefixes="188.114.97. 162.159.195. 8.6.112. 162.159.192. 188.114.96."
+		local fast_ports="1070 2408 1701 7559 500 854 880"
+		for pfx in $prefixes; do
+			rh=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1)
+			h_num=$(( (rh % 10) + 1 ))
+			for p in $fast_ports; do
+				echo "${pfx}${h_num}:${p}"
+			done
+		done
+	}
+	candidates=$(rnd_anycast_candidates | awk 'BEGIN{srand()} {print rand(), $0}' | sort -k1,1n | cut -d' ' -f2 | head -n 12 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+	endpoint=$(printf '%s\n' "$candidates" | awk '{print $1}')
 fi
+
+logger -p user.notice -t awg-warp-auto "native registration: endpoint=$endpoint candidates=$candidates"
 
 # Write metadata companion file for provider-fetch
 ports_json=$(printf '%s' "$valid_ports" | sed 's/ /,/g')

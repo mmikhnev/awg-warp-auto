@@ -8,6 +8,7 @@ explicit_endpoint=${2:-}
 endpoint=''
 sni=${3:-}
 quic_mode=${4:-dynamic}
+awg_version=${5:-v3_hybrid}
 tmp=${out}.json
 meta=${out%.conf}.meta.json
 umask 077
@@ -136,12 +137,7 @@ if [ -z "$valid_ports" ]; then
 	exit 1
 fi
 
-candidates=''
-for p in $valid_ports; do
-	candidates="${candidates:+${candidates} }${v4_ip}:${p}"
-done
-
-logger -p user.notice -t awg-warp-auto "native registration: v4=$v4_ip ports=$valid_ports candidates=$candidates"
+first_port=$(printf '%s' "$valid_ports" | awk '{print $1}')
 
 if [ -n "$explicit_endpoint" ]; then
 	case "$explicit_endpoint" in
@@ -153,13 +149,32 @@ if [ -n "$explicit_endpoint" ]; then
 			ep_port=${explicit_endpoint##*:}
 			[ "$ep_port" -ge 1 ] 2>/dev/null && [ "$ep_port" -le 65535 ] 2>/dev/null || exit 1
 			endpoint="$explicit_endpoint"
+			candidates="$explicit_endpoint"
 			;;
 		*) exit 1 ;;
 	esac
 else
-	first_port=$(printf '%s' "$valid_ports" | awk '{print $1}')
-	endpoint="${v4_ip}:${first_port}"
+	# Fast Cloudflare Anycast subnets and ports for latency and block evasion
+	rnd_anycast_candidates() {
+		# 1. Registered endpoint from Cloudflare API
+		echo "${v4_ip}:${first_port}"
+
+		# 2. Random hosts across verified fast Cloudflare Anycast subnets
+		local prefixes="188.114.97. 162.159.195. 8.6.112. 162.159.192. 188.114.96."
+		local fast_ports="1070 2408 1701 7559 500 854 880"
+		for pfx in $prefixes; do
+			rh=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1)
+			h_num=$(( (rh % 10) + 1 ))
+			for p in $fast_ports; do
+				echo "${pfx}${h_num}:${p}"
+			done
+		done
+	}
+	candidates=$(rnd_anycast_candidates | awk 'BEGIN{srand()} {print rand(), $0}' | sort -k1,1n | cut -d' ' -f2 | head -n 12 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+	endpoint=$(printf '%s\n' "$candidates" | awk '{print $1}')
 fi
+
+logger -p user.notice -t awg-warp-auto "native registration: endpoint=$endpoint candidates=$candidates"
 
 # Write metadata companion file for provider-fetch
 ports_json=$(printf '%s' "$valid_ports" | sed 's/ /,/g')
@@ -182,6 +197,8 @@ if [ "$quic_mode" != fallback ]; then
 	if command -v quic-i1 >/dev/null 2>&1 && printf '%s' "$effective_sni" | grep -Eq '^[A-Za-z0-9.-]{1,253}$'; then
 		dynamic_i1=$(quic-i1 --sni "$effective_sni" 2>/dev/null || true)
 		case "$dynamic_i1" in
+			'I1 = <b 0x'*'>') i1="$dynamic_i1" ;;
+			'<b 0x'*'>') i1="I1 = $dynamic_i1" ;;
 			'I1 = <b 0x'*'<r 16>') i1="$dynamic_i1" ;;
 			'<b 0x'*'<r 16>') i1="I1 = $dynamic_i1" ;;
 			*)
@@ -196,5 +213,28 @@ fi
 {
 	printf '%s\n' '[Interface]' "PrivateKey = $key" "Address = $v4${v6:+, $v6}" 'MTU = 1280'
 	printf '%s\n' 'S1 = 0' 'S2 = 0' 'S3 = 0' 'S4 = 0' 'Jc = 4' 'Jmin = 40' 'Jmax = 70' 'H1 = 1' 'H2 = 2' 'H3 = 3' 'H4 = 4' "$i1"
+	case "$awg_version" in
+		v3_0|v3_hybrid)
+			rand_range() {
+				min_l=$1; min_h=$2; sp_l=$3; sp_h=$4
+				r1=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1234)
+				r2=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 5678)
+				st=$(( min_l + (r1 % (min_h - min_l + 1)) ))
+				sp=$(( sp_l + (r2 % (sp_h - sp_l + 1)) ))
+				printf '%d-%d' "$st" "$(( st + sp ))"
+			}
+			printf 'ContentPaddingAddition = %s\n' "$(rand_range 20 50 15 45)"
+			printf 'RekeyAfterTime = %s\n' "$(rand_range 80 110 15 40)"
+			printf 'RekeyTimeout = %s\n' "$(rand_range 3 6 5 12)"
+			printf 'RejectAfterTime = %s\n' "$(rand_range 90 130 20 50)"
+			printf 'KeepaliveTimeout = %s\n' "$(rand_range 5 12 8 18)"
+			printf 'MaxHandshakeAttempts = %s\n' "$(rand_range 10 18 8 18)"
+			;;
+	esac
+	case "$awg_version" in
+		v3_1|v3_hybrid)
+			printf '%s\n' 'RandomTrailers = on' 'DisableCookies = on'
+			;;
+	esac
 	printf '%s\n' '' '[Peer]' "PublicKey = $peer" 'AllowedIPs = 0.0.0.0/0, ::/0' "Endpoint = $endpoint"
 } > "$out"
