@@ -157,4 +157,32 @@ sh -n "$SCRIPT_DIR/../root/usr/libexec/awg-warp-auto/health-check.sh"
 sh -n "$SCRIPT_DIR/../root/usr/libexec/awg-warp-auto/daemon.sh"
 echo "PASS: Test 5"
 
+echo "=== Test 6: delete_one and clean_replenish_unlocked ==="
+set_main active_id "p_active1111111111111111"
+touch "$(entry_file "p_active1111111111111111")"
+set_entry "p_active1111111111111111" status ACTIVE
+
+set_entry "p_dead1111111111111111" status FAILED
+touch "$(entry_file "p_dead1111111111111111")"
+
+set_entry "p_ready1111111111111111" status READY
+touch "$(entry_file "p_ready1111111111111111")"
+
+# Deleting active must fail
+if delete_one "p_active1111111111111111"; then
+	echo "FAIL: delete_one active should have failed" >&2
+	exit 1
+fi
+
+# Deleting p_dead1111111111111111 must succeed
+delete_one "p_dead1111111111111111"
+assert test ! -d "$TESTROOT/entries/p_dead1111111111111111"
+
+# Clean replenish must keep only active
+set_main minimum_ready 2
+clean_replenish_unlocked
+assert test -d "$TESTROOT/entries/p_active1111111111111111"
+assert test ! -d "$TESTROOT/entries/p_ready1111111111111111"
+echo "PASS: Test 6"
+
 echo "ALL EXTENDED INTEGRATION TESTS PASSED!"

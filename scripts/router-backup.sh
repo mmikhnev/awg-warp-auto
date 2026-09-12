@@ -9,7 +9,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_NAME="awg_backup_${TIMESTAMP}.tar.gz"
 
 echo "=== Taking remote backup on $ROUTER_USER@$ROUTER_HOST ==="
-ssh -o BatchMode=yes "$ROUTER_USER@$ROUTER_HOST" "
+ssh -F none -o BatchMode=yes -o StrictHostKeyChecking=no "$ROUTER_USER@$ROUTER_HOST" "
 	set -eu
 	BACKUP_DIR='/root/backups'
 	mkdir -p \"\$BACKUP_DIR\"

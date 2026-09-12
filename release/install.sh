@@ -1,0 +1,258 @@
+#!/bin/sh
+# Production self-contained installer for WARP Auto & AmneziaWG
+# Supports OpenWrt 25.x+ (apk) and fallback 24.x (opkg)
+# Uses verified package feed from https://github.com/Slava-Shchipunov/awg-openwrt
+set -eu
+
+case "$(id -u)" in
+	0) ;;
+	*) echo "ERROR: Run as root on the OpenWrt router." >&2; exit 1 ;;
+esac
+
+BASE_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+AWG_UPSTREAM_BASE="https://slava-shchipunov.github.io/awg-openwrt"
+AWG_KEY_URL="$AWG_UPSTREAM_BASE/keys/awg-openwrt-feed.pem"
+
+echo "=== 1. System & Target Detection ==="
+OS_RELEASE="/etc/openwrt_release"
+if [ ! -f "$OS_RELEASE" ]; then
+	echo "ERROR: /etc/openwrt_release not found. Not an OpenWrt system." >&2
+	exit 1
+fi
+
+# Detect OpenWrt version, target, subtarget, and architecture
+DISTRIB_RELEASE=$(grep "^DISTRIB_RELEASE=" "$OS_RELEASE" | cut -d"'" -f2)
+DISTRIB_TARGET=$(grep "^DISTRIB_TARGET=" "$OS_RELEASE" | cut -d"'" -f2)
+DISTRIB_ARCH=$(grep "^DISTRIB_ARCH=" "$OS_RELEASE" | cut -d"'" -f2)
+
+TARGET=${DISTRIB_TARGET%/*}
+SUBTARGET=${DISTRIB_TARGET#*/}
+VERSION=${DISTRIB_RELEASE}
+
+if command -v ubus >/dev/null 2>&1; then
+	UBUS_TARGET=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.target' 2>/dev/null || true)
+	if [ -n "$UBUS_TARGET" ]; then
+		TARGET=${UBUS_TARGET%/*}
+		SUBTARGET=${UBUS_TARGET#*/}
+	fi
+	UBUS_VER=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.version' 2>/dev/null || true)
+	[ -n "$UBUS_VER" ] && VERSION="$UBUS_VER"
+fi
+
+if command -v apk >/dev/null 2>&1; then
+	PKG_MGR="apk"
+elif command -v opkg >/dev/null 2>&1; then
+	PKG_MGR="opkg"
+else
+	echo "ERROR: Neither apk nor opkg package manager found." >&2
+	exit 1
+fi
+
+echo "Detected System:"
+echo "  OpenWrt Version : $VERSION"
+echo "  Target/Subtarget: $TARGET/$SUBTARGET"
+echo "  Architecture    : $DISTRIB_ARCH"
+echo "  Package Manager : $PKG_MGR"
+
+echo "=== 2. Checking & Configuring AmneziaWG Upstream Feed ==="
+if [ "$PKG_MGR" = "apk" ]; then
+	# OpenWrt 25.x+ flow: add upstream signed APK feed
+	KEYS_DIR="/etc/apk/keys"
+	mkdir -p "$KEYS_DIR"
+	FEED_KEY="$KEYS_DIR/awg-openwrt-feed.pem"
+	if [ -f "$BASE_DIR/keys/awg-openwrt-feed.pem" ]; then
+		cp "$BASE_DIR/keys/awg-openwrt-feed.pem" "$FEED_KEY"
+		echo "Installed bundled AmneziaWG public signing key."
+	elif [ ! -s "$FEED_KEY" ]; then
+		echo "Installing AmneziaWG public signing key..."
+		if ! curl -fsSL --connect-timeout 10 "$AWG_KEY_URL" -o "$FEED_KEY" 2>/dev/null && \
+		   ! wget -q -O "$FEED_KEY" "$AWG_KEY_URL" 2>/dev/null; then
+			echo "WARNING: Could not download signing key from $AWG_KEY_URL. Untrusted packages will be allowed." >&2
+		fi
+	fi
+
+	FEED_URL="$AWG_UPSTREAM_BASE/$VERSION/$TARGET/$SUBTARGET/packages.adb"
+	FEED_FILE="/etc/apk/repositories.d/customfeeds.list"
+	mkdir -p "/etc/apk/repositories.d"
+	[ -f "$FEED_FILE" ] || touch "$FEED_FILE"
+
+	# Add feed only if not already present
+	if ! grep -qF "$FEED_URL" "$FEED_FILE"; then
+		# Safe backup of customfeeds.list
+		cp "$FEED_FILE" "${FEED_FILE}.bak.$(date +%s)"
+		echo "$FEED_URL" >> "$FEED_FILE"
+		echo "Added upstream feed: $FEED_URL"
+	else
+		echo "Upstream feed already configured: $FEED_URL"
+	fi
+
+	echo "Updating package index..."
+	apk update 2>/dev/null || echo "WARNING: apk update had warnings or network is offline. Proceeding with local packages..."
+else
+	# OpenWrt 24.x opkg flow
+	echo "Updating opkg index..."
+	opkg update 2>/dev/null || echo "WARNING: opkg update had warnings. Proceeding..."
+fi
+
+echo "=== 3. Installing Base Dependencies ==="
+# Required runtime utilities including LuCI Web UI
+if [ "$PKG_MGR" = "apk" ]; then
+	apk add --allow-untrusted luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
+		echo "NOTE: Some base packages were already installed or network is offline. Continuing..."
+	}
+else
+	opkg install luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || true
+fi
+
+echo "=== 4. Installing AmneziaWG Kernel Module & Userspace Tools ==="
+# Install kmod-amneziawg and amneziawg-tools from local packages or configured feeds
+PACKAGES_DIR="$BASE_DIR/packages"
+KMOD_APK=$(find "$PACKAGES_DIR" -name "kmod-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
+AWG_TOOLS_APK=$(find "$PACKAGES_DIR" -name "amneziawg-tools-*.apk" 2>/dev/null | head -n 1 || true)
+
+if [ "$PKG_MGR" = "apk" ]; then
+	if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
+		if [ -n "$KMOD_APK" ] && [ -f "$KMOD_APK" ]; then
+			echo "Installing bundled $KMOD_APK..."
+			apk add --allow-untrusted "$KMOD_APK" 2>/dev/null || true
+		fi
+		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
+			echo "Installing kmod-amneziawg from feed..."
+			apk add --allow-untrusted kmod-amneziawg || {
+				echo "ERROR: Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET" >&2
+				exit 1
+			}
+		fi
+	else
+		echo "kmod-amneziawg already installed."
+	fi
+
+	if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
+		if [ -n "$AWG_TOOLS_APK" ] && [ -f "$AWG_TOOLS_APK" ]; then
+			echo "Installing bundled $AWG_TOOLS_APK..."
+			apk add --allow-untrusted "$AWG_TOOLS_APK" 2>/dev/null || true
+		fi
+		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
+			echo "Installing amneziawg-tools from feed..."
+			apk add --allow-untrusted amneziawg-tools || {
+				echo "ERROR: Unable to install amneziawg-tools" >&2
+				exit 1
+			}
+		fi
+	else
+		echo "amneziawg-tools already installed."
+	fi
+else
+	opkg list-installed | grep -q "^kmod-amneziawg " || opkg install kmod-amneziawg
+	opkg list-installed | grep -q "^amneziawg-tools " || opkg install amneziawg-tools
+fi
+
+echo "=== 5. Installing Local Packages (quic-i1 & WARP Auto) ==="
+# Check for bundled APKs in packages/
+QUIC_APK=$(find "$PACKAGES_DIR" -name "awg-warp-auto-quic-*.apk" 2>/dev/null | head -n 1 || true)
+LUCI_APK=$(find "$PACKAGES_DIR" -name "luci-proto-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
+
+if [ "$PKG_MGR" = "apk" ] && [ -n "$QUIC_APK" ] && [ -f "$QUIC_APK" ]; then
+	echo "Installing bundled $QUIC_APK..."
+	apk add --allow-untrusted "$QUIC_APK"
+elif [ -f "$BASE_DIR/dist/quic-i1" ]; then
+	echo "Installing standalone quic-i1 binary..."
+	cp "$BASE_DIR/dist/quic-i1" /usr/bin/quic-i1
+	chmod 755 /usr/bin/quic-i1
+fi
+
+if [ "$PKG_MGR" = "apk" ] && [ -n "$LUCI_APK" ] && [ -f "$LUCI_APK" ]; then
+	echo "Installing bundled $LUCI_APK..."
+	apk add --allow-untrusted "$LUCI_APK"
+elif [ -d "$BASE_DIR/overlay" ]; then
+	echo "Installing WARP Auto application files from overlay..."
+	cp -r "$BASE_DIR/overlay/"* /
+	chmod 644 /usr/share/rpcd/ucode/luci.amneziawg \
+	          /www/luci-static/resources/view/amneziawg/status.js \
+	          /usr/share/ucode/luci/controller/awgdownload.uc \
+	          /usr/share/rpcd/acl.d/luci-amneziawg.json \
+	          /usr/share/luci/menu.d/luci-proto-amneziawg.json
+	chmod 755 /usr/libexec/awg-warp-auto/*.sh \
+	          /usr/libexec/awg-warp-auto/*.uc \
+	          /etc/init.d/awg-warp-auto
+fi
+
+# Ensure all scripts and binaries have proper permissions regardless of packaging method
+chmod 755 /usr/libexec/awg-warp-auto/*.sh \
+          /usr/libexec/awg-warp-auto/*.uc \
+          /etc/init.d/awg-warp-auto 2>/dev/null || true
+[ -f /usr/bin/quic-i1 ] && chmod 755 /usr/bin/quic-i1
+[ -f /lib/netifd/proto/amneziawg.sh ] && chmod 755 /lib/netifd/proto/amneziawg.sh
+
+echo "=== 6. Initializing Configuration & Services Safely ==="
+# Ensure default UCI config exists without overwriting user data
+if [ ! -f /etc/config/awg-warp-auto ]; then
+	if [ -f "$BASE_DIR/overlay/etc/config/awg-warp-auto" ]; then
+		cp "$BASE_DIR/overlay/etc/config/awg-warp-auto" /etc/config/awg-warp-auto
+		chmod 600 /etc/config/awg-warp-auto
+	fi
+fi
+
+# Ensure default native_quic_mode is dynamic
+if [ -f /etc/config/awg-warp-auto ]; then
+	current_mode=$(uci -q get awg-warp-auto.main.native_quic_mode || true)
+	if [ "$current_mode" != "dynamic" ] && [ "$current_mode" != "fallback" ]; then
+		uci set awg-warp-auto.main.native_quic_mode='dynamic'
+		uci commit awg-warp-auto
+	fi
+fi
+
+# Clear LuCI cache
+rm -f /tmp/luci-indexcache 2>/dev/null || true
+
+# Reload rpcd and restart awg-warp-auto service ONLY
+echo "Reloading rpcd service..."
+/etc/init.d/rpcd restart
+
+echo "Enabling and starting awg-warp-auto service..."
+/etc/init.d/awg-warp-auto enable 2>/dev/null || true
+/etc/init.d/awg-warp-auto restart 2>/dev/null || true
+
+echo "=== 7. Post-Installation Verification ==="
+FAILURES=0
+
+if [ -x /usr/bin/quic-i1 ]; then
+	echo "  [OK] /usr/bin/quic-i1 is present and executable"
+else
+	echo "  [FAIL] /usr/bin/quic-i1 missing or not executable"
+	FAILURES=$((FAILURES + 1))
+fi
+
+if command -v awg >/dev/null 2>&1; then
+	echo "  [OK] amneziawg-tools (awg binary) is functional"
+else
+	echo "  [FAIL] awg binary missing"
+	FAILURES=$((FAILURES + 1))
+fi
+
+if [ -f /lib/modules/$(uname -r)/amneziawg.ko ] || lsmod | grep -q amneziawg; then
+	echo "  [OK] kmod-amneziawg kernel module is present"
+else
+	echo "  [FAIL] kmod-amneziawg missing"
+	FAILURES=$((FAILURES + 1))
+fi
+
+if ubus call luci.amneziawg getWarpAutoStatus >/dev/null 2>&1; then
+	echo "  [OK] rpcd luci.amneziawg ubus service responding"
+else
+	echo "  [FAIL] rpcd luci.amneziawg ubus service not responding"
+	FAILURES=$((FAILURES + 1))
+fi
+
+if [ "$FAILURES" -eq 0 ]; then
+	echo ""
+	echo "============================================================"
+	echo "WARP Auto installation completed successfully!"
+	echo "Open LuCI Web UI -> Services -> AmneziaWG to manage profiles."
+	echo "============================================================"
+	exit 0
+else
+	echo ""
+	echo "ERROR: Installation finished with $FAILURES verification failure(s)." >&2
+	exit 1
+fi

@@ -12,9 +12,11 @@ SRC="$BASE_DIR/source/luci-proto-amneziawg"
 echo "=== 1. Checking local syntax and tests ==="
 if command -v node >/dev/null 2>&1; then
 	node --check "$SRC/htdocs/luci-static/resources/view/amneziawg/status.js"
+	node --check "$SRC/htdocs/luci-static/resources/protocol/amneziawg.js"
 	echo "JS syntax check passed."
 fi
 
+sh "$SRC/tests/activation-regression-test.sh"
 sh "$SRC/tests/provider-pool-test.sh"
 if [ -f "$SRC/tests/extended-integration-test.sh" ]; then
 	sh "$SRC/tests/extended-integration-test.sh"
@@ -25,27 +27,36 @@ echo "=== 2. Creating backup on router before deployment ==="
 sh "$BASE_DIR/scripts/router-backup.sh" "$ROUTER_HOST" "$ROUTER_USER"
 
 echo "=== 3. Uploading updated files to router ==="
-scp -O -o BatchMode=yes \
+scp -F none -O -o BatchMode=yes -o StrictHostKeyChecking=no \
 	"$SRC/htdocs/luci-static/resources/view/amneziawg/status.js" \
 	"$ROUTER_USER@$ROUTER_HOST:/www/luci-static/resources/view/amneziawg/status.js"
 
-scp -O -o BatchMode=yes \
+scp -F none -O -o BatchMode=yes -o StrictHostKeyChecking=no \
+	"$SRC/htdocs/luci-static/resources/protocol/amneziawg.js" \
+	"$ROUTER_USER@$ROUTER_HOST:/www/luci-static/resources/protocol/amneziawg.js"
+
+scp -F none -O -o BatchMode=yes -o StrictHostKeyChecking=no \
 	"$SRC/root/usr/share/rpcd/ucode/luci.amneziawg" \
 	"$ROUTER_USER@$ROUTER_HOST:/usr/share/rpcd/ucode/luci.amneziawg"
 
-scp -O -o BatchMode=yes \
+scp -F none -O -o BatchMode=yes -o StrictHostKeyChecking=no \
 	"$SRC/root/usr/libexec/awg-warp-auto/daemon.sh" \
 	"$SRC/root/usr/libexec/awg-warp-auto/candidate-test.sh" \
 	"$SRC/root/usr/libexec/awg-warp-auto/health-check.sh" \
 	"$SRC/root/usr/libexec/awg-warp-auto/native-provider.sh" \
 	"$SRC/root/usr/libexec/awg-warp-auto/provider-fetch.sh" \
+	"$SRC/root/usr/libexec/awg-warp-auto/warp-gen-provider.uc" \
+	"$SRC/root/usr/libexec/awg-warp-auto/warp-gen-fetch.uc" \
+	"$SRC/root/usr/libexec/awg-warp-auto/activate-worker.uc" \
 	"$ROUTER_USER@$ROUTER_HOST:/usr/libexec/awg-warp-auto/"
 
 echo "=== 4. Setting permissions and reloading services ==="
-ssh -o BatchMode=yes "$ROUTER_USER@$ROUTER_HOST" "
+ssh -F none -o BatchMode=yes -o StrictHostKeyChecking=no "$ROUTER_USER@$ROUTER_HOST" "
 	chmod 644 /www/luci-static/resources/view/amneziawg/status.js
+	chmod 644 /www/luci-static/resources/protocol/amneziawg.js
 	chmod 644 /usr/share/rpcd/ucode/luci.amneziawg
 	chmod 755 /usr/libexec/awg-warp-auto/*.sh
+	chmod 755 /usr/libexec/awg-warp-auto/activate-worker.uc
 
 	# Clean LuCI bytecode / cache if present
 	rm -f /tmp/luci-indexcache 2>/dev/null || true
@@ -60,7 +71,7 @@ ssh -o BatchMode=yes "$ROUTER_USER@$ROUTER_HOST" "
 
 echo "=== 5. Verifying router status ==="
 sleep 2
-ssh -o BatchMode=yes "$ROUTER_USER@$ROUTER_HOST" "
+ssh -F none -o BatchMode=yes -o StrictHostKeyChecking=no "$ROUTER_USER@$ROUTER_HOST" "
 	ubus call luci.amneziawg getWarpAutoStatus > /tmp/warp_status.json
 	grep -Eq '\"ok\"[[:space:]]*:[[:space:]]*true' /tmp/warp_status.json && echo 'SUCCESS: getWarpAutoStatus returned ok:true' || {
 		echo 'ERROR: getWarpAutoStatus check failed!' >&2

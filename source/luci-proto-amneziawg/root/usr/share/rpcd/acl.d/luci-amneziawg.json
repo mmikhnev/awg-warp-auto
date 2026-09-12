@@ -5,7 +5,8 @@
 			"ubus": {
 				"luci.amneziawg": [
 					"getAwgInstances",
-					"getWarpAutoStatus"
+					"getWarpAutoStatus",
+					"getWarpAutoOperation"
 				]
 			},
 			"uci": [ "ddns", "system", "network" ]
@@ -18,6 +19,10 @@
 					"generatePsk",
 					"validateAwgConfig",
 					"importAwgConfig",
+					"createInterface",
+					"deleteInterface",
+					"restartInterface",
+					"exportInterfaceConfig",
 					"saveWarpAutoSettings",
 					"warpAutoAction"
 				]

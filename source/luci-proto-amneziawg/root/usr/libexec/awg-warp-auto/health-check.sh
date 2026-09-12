@@ -23,15 +23,18 @@ PROBE_TABLE=51823
 PROBE_PRIO=31823
 ADDR4=$(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
 [ -n "$ADDR4" ] || { echo 'FAIL interface_address'; exit 1; }
-cleanup() {
-	ip rule del priority "$PROBE_PRIO" 2>/dev/null || true
+
+safe_cleanup_probe() {
+	# Only delete rule if it specifically matches priority 31823 AND table 51823
+	if ip -4 rule show priority "$PROBE_PRIO" 2>/dev/null | grep -q "lookup $PROBE_TABLE"; then
+		ip rule del priority "$PROBE_PRIO" 2>/dev/null || true
+	fi
 	ip route flush table "$PROBE_TABLE" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
-# A previous probe can be interrupted by procd/rpcd before its EXIT trap runs.
-# Reclaim our dedicated priority/table so a stale rule cannot turn a healthy
-# tunnel into a false `FAIL probe_rule` and drain the pool.
-cleanup
+trap safe_cleanup_probe EXIT INT TERM
+# Reclaim dedicated priority/table before testing so any interrupted/stale probe rule
+# matching table 51823 is cleanly removed without touching other rules.
+safe_cleanup_probe
 ip route replace default dev "$IFACE" table "$PROBE_TABLE" || { echo 'FAIL probe_route'; exit 1; }
 ip rule add from "$ADDR4/32" priority "$PROBE_PRIO" table "$PROBE_TABLE" || { echo 'FAIL probe_rule'; exit 1; }
 
@@ -49,9 +52,11 @@ global_result=''
 if [ "$MODE" = strict ]; then
 	# Forkop transparently handles forwarded LAN packets, not a process created
 	# on the router itself. A router-local curl is therefore not evidence of a
-	# client policy failure. Verify that the expected policy rule exists; the
-	# interface-bound request below remains the end-to-end AWG proof.
-	ip -4 rule show 2>/dev/null | grep -Eq 'fwmark 0x4000000(/0x4000000)? .*lookup forkop' || global_result='policy_rule'
+	# client policy failure. Verify that the expected policy rule exists if Forkop is enabled;
+	# the interface-bound request below remains the end-to-end AWG proof.
+	if [ -x /etc/init.d/forkop ] && /etc/init.d/forkop enabled 2>/dev/null; then
+		ip -4 rule show 2>/dev/null | grep -Eq 'fwmark 0x4000000(/0x4000000)? .*lookup forkop' || global_result='policy_rule'
+	fi
 fi
 
 # Local proxy DNS can supply Fake-IP, so resolve a real public address for

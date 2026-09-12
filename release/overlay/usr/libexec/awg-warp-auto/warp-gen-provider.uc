@@ -698,7 +698,23 @@ function allowed_ips(options, include_ipv6) {
 	return value;
 }
 
-function make_config(api, variant, endpoint, allowed, include_ipv6) {
+function generate_random_range(min_low, min_high, spread_low, spread_high) {
+	let rnd1 = 0, rnd2 = 0;
+	let f = fs.open('/dev/urandom', 'r');
+	if (f) {
+		let b = f.read(4);
+		f.close();
+		if (b && length(b) >= 4) {
+			rnd1 = (ord(b, 0) << 8) | ord(b, 1);
+			rnd2 = (ord(b, 2) << 8) | ord(b, 3);
+		}
+	}
+	let start = min_low + (rnd1 % (min_high - min_low + 1));
+	let spread = spread_low + (rnd2 % (spread_high - spread_low + 1));
+	return start + '-' + (start + spread);
+}
+
+function make_config(api, variant, endpoint, allowed, include_ipv6, awg_version) {
 	let config = '[Interface]\n' +
 		'PrivateKey = ' + api.private_key + '\n' +
 		'Address = ' + api.ipv4 + (include_ipv6 && api.ipv6 != null ? ', ' + api.ipv6 : '') + '\n' +
@@ -716,6 +732,21 @@ function make_config(api, variant, endpoint, allowed, include_ipv6) {
 		'H4 = ' + variant.interface.h4 + '\n';
 	for (let field in variant.i_fields)
 		config += uc(substr(field.name, 0, 1)) + substr(field.name, 1) + ' = ' + field.value + '\n';
+
+	let ver = awg_version ?? 'v3_hybrid';
+	if (ver == 'v3_0' || ver == 'v3_hybrid') {
+		config += 'ContentPaddingAddition = ' + generate_random_range(20, 50, 15, 45) + '\n';
+		config += 'RekeyAfterTime = ' + generate_random_range(80, 110, 15, 40) + '\n';
+		config += 'RekeyTimeout = ' + generate_random_range(3, 6, 5, 12) + '\n';
+		config += 'RejectAfterTime = ' + generate_random_range(90, 130, 20, 50) + '\n';
+		config += 'KeepaliveTimeout = ' + generate_random_range(5, 12, 8, 18) + '\n';
+		config += 'MaxHandshakeAttempts = ' + generate_random_range(10, 18, 8, 18) + '\n';
+	}
+	if (ver == 'v3_1' || ver == 'v3_hybrid') {
+		config += 'RandomTrailers = on\n';
+		config += 'DisableCookies = on\n';
+	}
+
 	return config + '\n[Peer]\n' +
 		'PublicKey = ' + api.public_key + '\n' +
 		'AllowedIPs = ' + allowed + '\n' +
@@ -748,7 +779,8 @@ function fetch_configs(options) {
 	if (api == null)
 		return failure('WARP_API_UNAVAILABLE', 'No discovered WARP API returned a valid config');
 
-	let limit = clamp_number(option(options, 'limit', length(metadata.variants)), length(metadata.variants), 1, 8);
+	let limit = clamp_number(option(options, 'limit', length(metadata.variants)), length(metadata.variants), 1, 10);
+	let awg_version = option(options, 'awg_version', 'v3_hybrid');
 	let configs = [];
 	/* The site randomizes endpoint separately from AWG variant. One unlucky
 	 * endpoint must not make a whole refresh look invalid, so spread a bounded
@@ -761,7 +793,7 @@ function fetch_configs(options) {
 			source: api_url,
 			source_id: variant.id + '@' + endpoint,
 			endpoint,
-			config: make_config(api, variant, endpoint, allowed, include_ipv6)
+			config: make_config(api, variant, endpoint, allowed, include_ipv6, awg_version)
 		});
 	}
 	if (!length(configs))

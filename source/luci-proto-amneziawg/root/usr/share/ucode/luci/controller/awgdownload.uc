@@ -10,6 +10,25 @@ function download() {
 		http.status(403, 'Forbidden');
 		return;
 	}
+	let iface = http.formvalue('interface');
+	if (iface) {
+		if (type(iface) != 'string' || !match(iface, /^[A-Za-z][A-Za-z0-9_]{0,14}$/)) {
+			http.status(400, 'Invalid interface');
+			return;
+		}
+		const res = ubus.call('luci.amneziawg', 'exportInterfaceConfig', { name: iface });
+		if (!res || !res.ok || !res.config) {
+			http.status(404, 'Interface configuration unavailable');
+			return;
+		}
+		http.header('Cache-Control', 'no-store');
+		http.header('X-Content-Type-Options', 'nosniff');
+		http.header('Content-Disposition', 'attachment; filename="' + (res.filename || (iface + '.conf')) + '"');
+		http.prepare_content('application/octet-stream');
+		http.write(res.config);
+		return;
+	}
+
 	let id = http.formvalue('id');
 	if (id == 'active') {
 		const uci = cursor();

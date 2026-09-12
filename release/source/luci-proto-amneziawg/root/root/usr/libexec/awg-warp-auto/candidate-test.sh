@@ -8,6 +8,7 @@ set -u
 CONFIG=${1:-}
 TIMEOUT=${2:-10}
 LISTEN_PORT=${3:-51822}
+RESOLVERS=${4:-}
 DEV=awg_auto_probe
 TABLE=51822
 PRIO=31822
@@ -21,12 +22,17 @@ fail() {
 }
 
 cleanup() {
-	ip rule del priority "$PRIO" 2>/dev/null || true
+	if ip -4 rule show priority "$PRIO" 2>/dev/null | grep -q "lookup $TABLE"; then
+		ip rule del priority "$PRIO" 2>/dev/null || true
+	fi
 	ip route flush table "$TABLE" 2>/dev/null || true
 	ip link del dev "$DEV" 2>/dev/null || true
 	rm -f "$TMP"
 }
 trap cleanup EXIT INT TERM
+# procd can interrupt a probe before its EXIT handler. Reclaim only our
+# dedicated probe resources before testing the next candidate.
+cleanup
 
 case "$CONFIG" in
 	/etc/awg-warp-auto/pool/p_*.conf|/tmp/awg-warp-auto/generated/*.conf) ;;
@@ -74,11 +80,17 @@ ip route replace default dev "$DEV" table "$TABLE" || fail route
 ip rule add oif "$DEV" priority "$PRIO" table "$TABLE" || fail rule
 
 # Use a real public address instead of a possible Fake-IP returned by the
-# local proxy DNS.  TLS still uses the genuine YouTube hostname via --resolve.
-YT_IP=$(nslookup www.youtube.com 1.1.1.1 2>/dev/null | awk '
-	/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
-	/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
-')
+# local proxy DNS. A temporary block of one public resolver is not evidence
+# that an otherwise healthy candidate is broken.
+YT_IP=''
+resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
+for DNS in $resolvers_list; do
+	YT_IP=$(nslookup www.youtube.com "$DNS" 2>/dev/null | awk '
+		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+		/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+	')
+	[ -n "$YT_IP" ] && break
+done
 [ -n "$YT_IP" ] || fail dns
 
 BEFORE=$(awg show "$DEV" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')

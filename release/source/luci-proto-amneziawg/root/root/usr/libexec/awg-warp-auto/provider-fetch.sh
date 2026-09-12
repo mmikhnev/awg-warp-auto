@@ -6,7 +6,7 @@ OUT=/tmp/awg-warp-auto/generated
 provider=${1:-remote}
 limit=${2:-2}
 case "$limit" in ''|*[!0-9]*) exit 2 ;; esac
-[ "$limit" -ge 1 ] && [ "$limit" -le 8 ] || exit 2
+[ "$limit" -ge 1 ] && [ "$limit" -le 10 ] || exit 2
 umask 077
 mkdir -p "$OUT"
 case "$provider" in
@@ -18,14 +18,33 @@ remote)
 native)
 	# The coordinator owns the registration budget and commits its reservation
 	# before calling us. One invocation registers exactly one independent device.
-	endpoint=${3:-8.6.112.6:987}
+	endpoint=${3:-}
 	sni=$(uci -q get awg-warp-auto.main.native_sni || true)
-	quic_mode=$(uci -q get awg-warp-auto.main.native_quic_mode || true)
+	quic_mode=$(uci -q get awg-warp-auto.main.native_quic_mode || echo "dynamic")
 	path="$OUT/generated-native-$$.conf"
-	if "$RUNTIME/native-provider.sh" "$path" "$endpoint" "$sni" "$quic_mode" >/dev/null 2>&1; then
-		printf '{"ok":true,"provider":"native","configs":[{"path":"%s","profile":"WARP_native"}]}\n' "$path"
+	meta="${path%.conf}.meta.json"
+	ret=0
+	"$RUNTIME/native-provider.sh" "$path" "$endpoint" "$sni" "$quic_mode" >/dev/null 2>&1 || ret=$?
+	if [ "$ret" -eq 0 ]; then
+		if [ -r "$meta" ]; then
+			v4_val=$(jsonfilter -i "$meta" -e '@.v4')
+			ports_arr=$(jsonfilter -i "$meta" -e '@.ports')
+			cands_arr=$(jsonfilter -i "$meta" -e '@.candidates')
+			rm -f "$meta"
+			printf '{"ok":true,"provider":"native","v4":"%s","ports":%s,"candidates":%s,"configs":[{"path":"%s","profile":"WARP_native"}]}\n' \
+				"$v4_val" "${ports_arr:-[]}" "${cands_arr:-[]}" "$path"
+		else
+			printf '{"ok":true,"provider":"native","configs":[{"path":"%s","profile":"WARP_native"}]}\n' "$path"
+		fi
 	else
 		rm -f "$path"
+		if [ -r "$meta" ] && [ "$(jsonfilter -i "$meta" -e '@.rate_limited' 2>/dev/null)" = "true" ]; then
+			retry_after=$(jsonfilter -i "$meta" -e '@.retry_after' 2>/dev/null || echo 300)
+			rm -f "$meta"
+			printf '{"ok":false,"rate_limited":true,"retry_after":%d,"error":{"code":"REGISTRATION_RATE_LIMITED"}}\n' "$retry_after"
+			exit 2
+		fi
+		rm -f "$meta"
 		printf '{"ok":false,"error":{"code":"NATIVE_REGISTRATION_FAILED"}}\n'
 		exit 1
 	fi

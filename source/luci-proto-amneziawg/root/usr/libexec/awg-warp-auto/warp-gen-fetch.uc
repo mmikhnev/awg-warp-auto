@@ -36,9 +36,10 @@ if (!match(directory, /^\/tmp\/awg-warp-auto\/generated$/)) {
 let result = warpgen.fetch_configs({
 	source_url: safe_string(source_url, ''),
 	timeout: safe_number(timeout, 12, 3, 60),
-	limit: safe_number(limit, 3, 1, 8),
+	limit: safe_number(limit, 3, 1, 10),
 	include_ipv6: safe_string(include_ipv6, '0'),
-	allowed_ips: '0.0.0.0/0, ::/0'
+	allowed_ips: '0.0.0.0/0, ::/0',
+	awg_version: safe_string(awg_version, 'v3_hybrid')
 });
 
 if (!result.ok) {
