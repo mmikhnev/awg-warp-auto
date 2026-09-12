@@ -209,6 +209,12 @@ return network.registerProtocol('amneziawg', {
 			return true;
 		};
 
+		o = s.taboption('advanced', form.Flag, 'defaultroute', _('Use default gateway'), _('If unchecked, no default route is setup. Keep unchecked when routing traffic selectively via Forkop.'));
+		o.default = o.disabled;
+
+		o = s.taboption('advanced', form.Flag, 'peerdns', _('Use DNS servers advertised by peer'), _('If unchecked, advertised DNS servers are ignored'));
+		o.default = o.disabled;
+
         // AmneziaWG
 
         try {
@@ -290,6 +296,36 @@ return network.registerProtocol('amneziawg', {
 		o = s.taboption('amneziawg', form.Value, 'awg_i5', _('I5'), _('Fifth special junk packet signature.'));
         o.datatype = 'string';
         o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_contentpaddingaddition', _('ContentPaddingAddition'), _('AWG 3.0 content padding range or count (e.g. 43-77).'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_rekeyaftertime', _('RekeyAfterTime'), _('AWG 3.0 rekey interval in seconds or range (e.g. 51-129).'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_rekeytimeout', _('RekeyTimeout'), _('AWG 3.0 rekey timeout in seconds or range.'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_rejectaftertime', _('RejectAfterTime'), _('AWG 3.0 reject after time in seconds or range.'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_keepalivetimeout', _('KeepaliveTimeout'), _('AWG 3.0 keepalive timeout in seconds or range.'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Value, 'awg_maxhandshakeattempts', _('MaxHandshakeAttempts'), _('AWG 3.0 maximum handshake attempts or range.'));
+		o.datatype = 'string';
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Flag, 'awg_randomtrailers', _('RandomTrailers'), _('AWG 3.1 enable random trailers.'));
+		o.optional = true;
+
+		o = s.taboption('amneziawg', form.Flag, 'awg_disablecookies', _('DisableCookies'), _('AWG 3.1 disable cookies.'));
+		o.optional = true;
 
 		// -- peers -----------------------------------------------------------------------
 
@@ -460,9 +496,23 @@ return network.registerProtocol('amneziawg', {
 					s.getOption('awg_i3').getUIElement(s.section).setValue(config.interface_i3 || '');
 					s.getOption('awg_i4').getUIElement(s.section).setValue(config.interface_i4 || '');
 					s.getOption('awg_i5').getUIElement(s.section).setValue(config.interface_i5 || '');
+					s.getOption('awg_contentpaddingaddition').getUIElement(s.section).setValue(config.interface_contentpaddingaddition || '');
+					s.getOption('awg_rekeyaftertime').getUIElement(s.section).setValue(config.interface_rekeyaftertime || '');
+					s.getOption('awg_rekeytimeout').getUIElement(s.section).setValue(config.interface_rekeytimeout || '');
+					s.getOption('awg_rejectaftertime').getUIElement(s.section).setValue(config.interface_rejectaftertime || '');
+					s.getOption('awg_keepalivetimeout').getUIElement(s.section).setValue(config.interface_keepalivetimeout || '');
+					s.getOption('awg_maxhandshakeattempts').getUIElement(s.section).setValue(config.interface_maxhandshakeattempts || '');
+					s.getOption('awg_randomtrailers').getUIElement(s.section).setValue(config.interface_randomtrailers == 'on' || config.interface_randomtrailers == '1' ? '1' : '0');
+					s.getOption('awg_disablecookies').getUIElement(s.section).setValue(config.interface_disablecookies == 'on' || config.interface_disablecookies == '1' ? '1' : '0');
 
 					if (config.interface_dns)
 						s.getOption('dns').getUIElement(s.section).setValue(config.interface_dns);
+
+					try {
+						var fwmarkOpt = s.getOption('fwmark');
+						if (fwmarkOpt && !fwmarkOpt.getUIElement(s.section).getValue())
+							fwmarkOpt.getUIElement(s.section).setValue('0x01000000');
+					} catch(e) {}
 
 					for (var i = 0; i < config.peers.length; i++) {
 						var pconf = config.peers[i];
@@ -477,6 +527,7 @@ return network.registerProtocol('amneziawg', {
 						uci.set('network', sid, 'public_key', pconf.peer_publickey);
 						uci.set('network', sid, 'preshared_key', pconf.peer_presharedkey);
 						uci.set('network', sid, 'allowed_ips', pconf.peer_allowedips);
+						uci.set('network', sid, 'route_allowed_ips', '0');
 						uci.set('network', sid, 'persistent_keepalive', pconf.peer_persistentkeepalive);
 
 						if (pconf.peer_endpoint) {
@@ -756,6 +807,7 @@ return network.registerProtocol('amneziawg', {
 
 		o = ss.option(form.Flag, 'route_allowed_ips', _('Route Allowed IPs'), _('Optional. Create routes for Allowed IPs for this peer.'));
 		o.modalonly = true;
+		o.default = o.disabled;
 
 		o = ss.option(form.Value, 'endpoint_host', _('Endpoint Host'), _('Optional. Host of peer. Names are resolved prior to bringing up the interface.'));
 		o.placeholder = 'vpn.example.com';

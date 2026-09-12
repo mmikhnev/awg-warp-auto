@@ -22,7 +22,9 @@ fail() {
 }
 
 cleanup() {
-	ip rule del priority "$PRIO" 2>/dev/null || true
+	if ip -4 rule show priority "$PRIO" 2>/dev/null | grep -q "lookup $TABLE"; then
+		ip rule del priority "$PRIO" 2>/dev/null || true
+	fi
 	ip route flush table "$TABLE" 2>/dev/null || true
 	ip link del dev "$DEV" 2>/dev/null || true
 	rm -f "$TMP"
