@@ -161,6 +161,8 @@ RELEASE_TAR="awg-warp-auto-${VERSION}-openwrt25.12.4-filogic.tar.gz"
   rm -rf "$TMP_BUILD/awg-warp-auto-release"
   mkdir -p "$TMP_BUILD/awg-warp-auto-release"
   cp -r release/* "$TMP_BUILD/awg-warp-auto-release/"
+  rm -f "$TMP_BUILD/awg-warp-auto-release/awg-warp-auto-release.tar.gz"
+  rm -rf "$TMP_BUILD/awg-warp-auto-release/tests"
   tar -czf "$RELEASE_DIR/$RELEASE_TAR" -C "$TMP_BUILD" awg-warp-auto-release
   cp "$RELEASE_DIR/$RELEASE_TAR" "$REPO_DIR/release/awg-warp-auto-release.tar.gz"
   cp "$RELEASE_DIR/$RELEASE_TAR" "$RELEASE_DIR/awg-warp-auto-release.tar.gz"
