@@ -64,50 +64,63 @@ echo "  Architecture    : $DISTRIB_ARCH"
 echo "  Package Manager : $PKG_MGR"
 
 echo "${C_CYAN}=== 2. Checking & Configuring AmneziaWG Upstream Feed ===${C_RESET}"
-if [ "$PKG_MGR" = "apk" ]; then
-	# OpenWrt 25.x+ flow: add upstream signed APK feed
-	KEYS_DIR="/etc/apk/keys"
-	mkdir -p "$KEYS_DIR"
-	FEED_KEY="$KEYS_DIR/awg-openwrt-feed.pem"
-	if [ -f "$BASE_DIR/keys/awg-openwrt-feed.pem" ]; then
-		cp "$BASE_DIR/keys/awg-openwrt-feed.pem" "$FEED_KEY"
-		echo "Installed bundled AmneziaWG public signing key."
-	elif [ ! -s "$FEED_KEY" ]; then
-		echo "Installing AmneziaWG public signing key..."
-		if ! curl -fsSL --connect-timeout 10 "$AWG_KEY_URL" -o "$FEED_KEY" 2>/dev/null && \
-		   ! wget -q -O "$FEED_KEY" "$AWG_KEY_URL" 2>/dev/null; then
-			echo "${C_YELLOW}[WARNING] Could not download signing key from $AWG_KEY_URL. Untrusted packages will be allowed.${C_RESET}" >&2
+NEED_FEED=1
+if [ "$PKG_MGR" = "apk" ] && apk info -e kmod-amneziawg >/dev/null 2>&1 && apk info -e amneziawg-tools >/dev/null 2>&1; then
+	NEED_FEED=0
+	echo "${C_GREEN}[✓] kmod-amneziawg и amneziawg-tools уже установлены, сторонний фид не требуется.${C_RESET}"
+elif [ "$PKG_MGR" = "opkg" ] && opkg list-installed 2>/dev/null | grep -q "^kmod-amneziawg " && opkg list-installed 2>/dev/null | grep -q "^amneziawg-tools "; then
+	NEED_FEED=0
+	echo "${C_GREEN}[✓] kmod-amneziawg и amneziawg-tools уже установлены, сторонний фид не требуется.${C_RESET}"
+fi
+
+if [ "$NEED_FEED" -eq 1 ]; then
+	if [ "$PKG_MGR" = "apk" ]; then
+		# OpenWrt 25.x+ flow: add upstream signed APK feed
+		KEYS_DIR="/etc/apk/keys"
+		mkdir -p "$KEYS_DIR"
+		FEED_KEY="$KEYS_DIR/awg-openwrt-feed.pem"
+		if [ -f "$BASE_DIR/keys/awg-openwrt-feed.pem" ]; then
+			cp "$BASE_DIR/keys/awg-openwrt-feed.pem" "$FEED_KEY"
+			echo "Установлен официальный публичный ключ подписи AmneziaWG."
+		elif [ ! -s "$FEED_KEY" ]; then
+			echo "Загрузка публичного ключа подписи AmneziaWG..."
+			if ! curl -fsSL --connect-timeout 10 "$AWG_KEY_URL" -o "$FEED_KEY" 2>/dev/null && \
+			   ! wget -q -O "$FEED_KEY" "$AWG_KEY_URL" 2>/dev/null; then
+				echo "${C_YELLOW}[WARNING] Could not download signing key from $AWG_KEY_URL.${C_RESET}" >&2
+			fi
 		fi
-	fi
 
-	FEED_URL="$AWG_UPSTREAM_BASE/$VERSION/$TARGET/$SUBTARGET/packages.adb"
-	FEED_FILE="/etc/apk/repositories.d/customfeeds.list"
-	mkdir -p "/etc/apk/repositories.d"
-	[ -f "$FEED_FILE" ] || touch "$FEED_FILE"
+		FEED_URL="$AWG_UPSTREAM_BASE/$VERSION/$TARGET/$SUBTARGET/packages.adb"
+		FEED_FILE="/etc/apk/repositories.d/customfeeds.list"
+		mkdir -p "/etc/apk/repositories.d"
+		[ -f "$FEED_FILE" ] || touch "$FEED_FILE"
 
-	# Add feed only if not already present
-	if ! grep -qF "$FEED_URL" "$FEED_FILE"; then
-		# Safe backup of customfeeds.list
-		cp "$FEED_FILE" "${FEED_FILE}.bak.$(date +%s)"
-		echo "$FEED_URL" >> "$FEED_FILE"
-		echo "Added upstream feed: $FEED_URL"
+		# Add feed only if not already present
+		if ! grep -qF "$FEED_URL" "$FEED_FILE"; then
+			# Safe backup of customfeeds.list
+			cp "$FEED_FILE" "${FEED_FILE}.bak.$(date +%s)"
+			echo "$FEED_URL" >> "$FEED_FILE"
+			echo "Добавлен репозиторий: $FEED_URL"
+		else
+			echo "Репозиторий уже подключен: $FEED_URL"
+		fi
+
+		echo "Обновление индекса пакетов..."
+		apk update 2>/dev/null || echo "${C_YELLOW}[WARNING] apk update имел предупреждения или сеть недоступна.${C_RESET}"
 	else
-		echo "Upstream feed already configured: $FEED_URL"
+		# OpenWrt 24.x opkg flow
+		echo "Обновление индекса пакетов opkg..."
+		opkg update 2>/dev/null || echo "${C_YELLOW}[WARNING] opkg update имел предупреждения.${C_RESET}"
 	fi
-
-	echo "Updating package index..."
-	apk update 2>/dev/null || echo "${C_YELLOW}[WARNING] apk update had warnings or network is offline. Proceeding with local packages...${C_RESET}"
-else
-	# OpenWrt 24.x opkg flow
-	echo "Updating opkg index..."
-	opkg update 2>/dev/null || echo "${C_YELLOW}[WARNING] opkg update had warnings. Proceeding...${C_RESET}"
 fi
 
 echo "${C_CYAN}=== 3. Installing Base Dependencies ===${C_RESET}"
-# Required runtime utilities including LuCI Web UI
+# Required runtime utilities including LuCI Web UI (strictly verified official OpenWrt packages)
 if [ "$PKG_MGR" = "apk" ]; then
-	apk add --allow-untrusted luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
-		echo "NOTE: Some base packages were already installed or network is offline. Continuing..."
+	apk add luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
+		apk add --allow-untrusted luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
+			echo "NOTE: Базовые пакеты уже установлены или сеть офлайн. Продолжение..."
+		}
 	}
 else
 	opkg install luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || true

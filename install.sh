@@ -59,57 +59,92 @@ echo ""
 # 1. РЕЖИМ УДАЛЕНИЯ
 # --------------------------------------------------------------------
 if [ "$ACTION" = "uninstall" ]; then
-	echo "${C_RED}=== Полное удаление WARP Auto & AmneziaWG ===${C_RESET}"
-	echo "${C_CYAN}[1/6]${C_RESET} Остановка сервиса awg-warp-auto..."
+	echo "${C_RED}=== Удаление WARP Auto & AmneziaWG ===${C_RESET}"
+	if [ -f /etc/config/network ]; then
+		UNINST_BAK="/etc/config/network.pre-uninstall.$(date +%s).bak"
+		cp /etc/config/network "$UNINST_BAK"
+		echo "${C_GREEN}[✓] Резервная копия сети создана: $UNINST_BAK${C_RESET}"
+	fi
+
+	echo ""
+	echo "${C_BOLD}Выберите область удаления:${C_RESET}"
+	echo "  ${C_CYAN}[1] Удалить только WARP Auto (YTwarp)${C_RESET} — другие AmneziaWG интерфейсы сохранятся"
+	echo "  ${C_RED}[2] Полная зачистка всех интерфейсов AmneziaWG и пакетов ядра${C_RESET}"
+	printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2] (Enter = 1): ${C_RESET}"
+	read -r uninst_scope || uninst_scope=""
+
+	echo ""
+	echo "${C_CYAN}[1/5]${C_RESET} Остановка сервиса awg-warp-auto..."
 	/etc/init.d/awg-warp-auto stop 2>/dev/null || true
 	/etc/init.d/awg-warp-auto disable 2>/dev/null || true
 
-	echo "${C_CYAN}[2/6]${C_RESET} Удаление всех интерфейсов и маршрутов с proto=amneziawg..."
-	for iface in $(uci -q show network | grep '\.proto=.amneziawg.' | cut -d. -f2 | cut -d= -f1); do
-		[ -n "$iface" ] || continue
-		ifdown "$iface" 2>/dev/null || true
-		uci -q delete "network.$iface" || true
-		uci -q delete "network.${iface}_ipv4_egress" || true
-		uci -q delete "network.${iface}_ipv4_mark" || true
-		for r in $(uci -q show network | grep "\.interface='$iface'" | cut -d. -f2 | cut -d= -f1); do
+	echo "${C_CYAN}[2/5]${C_RESET} Удаление сетевых интерфейсов..."
+	if [ "$uninst_scope" = "2" ]; then
+		# Полное удаление всех amneziawg интерфейсов
+		for iface in $(uci -q show network | grep '\.proto=.amneziawg.' | cut -d. -f2 | cut -d= -f1); do
+			[ -n "$iface" ] || continue
+			ifdown "$iface" 2>/dev/null || true
+			uci -q delete "network.$iface" || true
+			uci -q delete "network.${iface}_ipv4_egress" || true
+			uci -q delete "network.${iface}_ipv4_mark" || true
+			for r in $(uci -q show network | grep "\.interface='$iface'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "network.$r" || true
+			done
+		done
+		for peer in $(uci -q show network | grep '=amneziawg_' | cut -d. -f2 | cut -d= -f1); do
+			uci -q delete "network.$peer" || true
+		done
+	else
+		# Безопасное удаление только YTwarp
+		warp_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
+		ifdown "$warp_iface" 2>/dev/null || true
+		uci -q delete "network.$warp_iface" || true
+		uci -q delete "network.${warp_iface}_ipv4_egress" || true
+		uci -q delete "network.${warp_iface}_ipv4_mark" || true
+		for r in $(uci -q show network | grep "\.interface='$warp_iface'" | cut -d. -f2 | cut -d= -f1); do
 			uci -q delete "network.$r" || true
 		done
-	done
-	for peer in $(uci -q show network | grep '=amneziawg_' | cut -d. -f2 | cut -d= -f1); do
-		uci -q delete "network.$peer" || true
-	done
+		uci -q delete "network.amneziawg_${warp_iface}" || true
+	fi
 	uci commit network 2>/dev/null || true
 
-	echo "${C_CYAN}[3/6]${C_RESET} Удаление пакетов apk..."
-	apk del luci-proto-amneziawg awg-warp-auto-quic amneziawg-tools kmod-amneziawg 2>/dev/null || true
-
-	echo "${C_CYAN}[4/6]${C_RESET} Выгрузка модуля ядра..."
-	rmmod amneziawg 2>/dev/null || true
-
-	echo "${C_CYAN}[5/6]${C_RESET} Удаление файлов приложения, модулей и настроек..."
-	rm -f /usr/bin/quic-i1 /usr/bin/awg
-	rm -f /lib/modules/*/amneziawg.ko
-	rm -f /lib/netifd/proto/amneziawg.sh
+	echo "${C_CYAN}[3/5]${C_RESET} Удаление компонентов приложения..."
+	if [ "$uninst_scope" = "2" ]; then
+		if command -v apk >/dev/null 2>&1; then
+			apk del luci-proto-amneziawg awg-warp-auto-quic amneziawg-tools kmod-amneziawg 2>/dev/null || true
+		elif command -v opkg >/dev/null 2>&1; then
+			opkg remove luci-proto-amneziawg awg-warp-auto-quic amneziawg-tools kmod-amneziawg 2>/dev/null || true
+		fi
+		rmmod amneziawg 2>/dev/null || true
+		rm -f /usr/bin/awg /lib/modules/*/amneziawg.ko /lib/netifd/proto/amneziawg.sh
+	else
+		if command -v apk >/dev/null 2>&1; then
+			apk del luci-proto-amneziawg awg-warp-auto-quic 2>/dev/null || true
+		elif command -v opkg >/dev/null 2>&1; then
+			opkg remove luci-proto-amneziawg awg-warp-auto-quic 2>/dev/null || true
+		fi
+	fi
+	rm -f /usr/bin/quic-i1
 	rm -rf /etc/config/awg-warp-auto /etc/init.d/awg-warp-auto /etc/awg-warp-auto /usr/libexec/awg-warp-auto
 	rm -f /usr/share/rpcd/ucode/luci.amneziawg /usr/share/rpcd/acl.d/luci-amneziawg.json /usr/share/luci/menu.d/luci-proto-amneziawg.json /usr/share/ucode/luci/controller/awgdownload.uc
 	rm -rf /www/luci-static/resources/view/amneziawg /www/luci-static/resources/protocol/amneziawg.js /www/luci-static/resources/icons/amneziawg.svg
 	rm -rf /tmp/luci-indexcache /tmp/awg-warp-auto* /tmp/quic*
 
-	echo "${C_CYAN}[6/6]${C_RESET} Перезапуск сети и веб-интерфейса..."
+	echo "${C_CYAN}[4/5]${C_RESET} Перезапуск служб сети и веб-интерфейса..."
 	/etc/init.d/network reload 2>/dev/null || true
 	/etc/init.d/rpcd restart 2>/dev/null || true
 
+	echo "${C_CYAN}[5/5]${C_RESET} Завершено."
 	echo ""
 	echo "${C_GREEN}======================================================================${C_RESET}"
-	echo "${C_BOLD}${C_GREEN} [✓] WARP Auto и AmneziaWG полностью удалены с роутера!              ${C_RESET}"
+	echo "${C_BOLD}${C_GREEN} [✓] Удаление успешно завершено!                                      ${C_RESET}"
 	echo "     Forkop сохранен и не затронут.                                   "
-	echo "     Рекомендуется перезагрузить роутер: reboot                       "
 	echo "${C_GREEN}======================================================================${C_RESET}"
 	exit 0
 fi
 
 # --------------------------------------------------------------------
-# 2. СКАЧИВАНИЕ РЕЛИЗНОГО ПАКЕТА
+# 2. СКАЧИВАНИЕ РЕЛИЗНОГО ПАКЕТА И ПРОВЕРКА ЦЕЛОСТНОСТИ
 # --------------------------------------------------------------------
 ARCHIVE="/tmp/awg-warp-auto-release.tar.gz"
 
@@ -134,6 +169,36 @@ else
 		echo "Проверьте доступность интернета на роутере." >&2
 		exit 1
 	fi
+
+	# Проверка целостности SHA-256
+	echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
+	CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS"
+	EXPECTED_SHA=""
+	if command -v curl >/dev/null 2>&1; then
+		EXPECTED_SHA=$(curl -fsSL --connect-timeout 10 "$CHECKSUM_URL" 2>/dev/null | grep "awg-warp-auto-release\.tar\.gz" | awk '{print $1}' || true)
+	fi
+	if [ -z "$EXPECTED_SHA" ]; then
+		EXPECTED_SHA=$(wget -q -O - "$CHECKSUM_URL" 2>/dev/null | grep "awg-warp-auto-release\.tar\.gz" | awk '{print $1}' || true)
+	fi
+	if [ -n "$EXPECTED_SHA" ]; then
+		ACTUAL_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+		if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+			echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает!${C_RESET}" >&2
+			echo "Ожидалось: $EXPECTED_SHA" >&2
+			echo "Получено:   $ACTUAL_SHA" >&2
+			echo "Возможна ошибка загрузки или подмена файла. Установка прервана." >&2
+			rm -f "$ARCHIVE"
+			exit 1
+		fi
+		echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
+	fi
+fi
+
+# Резервная копия текущей сети перед распаковкой и установкой
+if [ -f /etc/config/network ]; then
+	PRE_INST_BAK="/etc/config/network.pre-awg-warp-auto.$(date +%s).bak"
+	cp /etc/config/network "$PRE_INST_BAK"
+	echo "${C_GREEN}[✓] Создан резервный бэкап сетевых настроек: $PRE_INST_BAK${C_RESET}"
 fi
 
 echo "${C_CYAN}---> Распаковка пакета...${C_RESET}"
