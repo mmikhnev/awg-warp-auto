@@ -1,5 +1,8 @@
 # WARP Auto & AmneziaWG v3.1 для OpenWrt
 
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-Clean%20(0%20detections)-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/url/aHR0cHM6Ly9naXRodWIuY29tL21taWtobmV2L2F3Zy13YXJwLWF1dG8)
+[![OpenWrt](https://img.shields.io/badge/OpenWrt-24.10%20%7C%2025.x-00aae7?logo=openwrt)](https://openwrt.org)
+
 Автоматический генератор, менеджер пула профилей Cloudflare WARP и веб-интерфейс LuCI для протокола **AmneziaWG** (поддержка параметров v3.0 и v3.1).
 
 Разработано специально для OpenWrt 25.x (пакетный менеджер `apk`) на архитектуре **aarch64 Cortex-A53** (MediaTek Filogic MT7981 / MT7986 / BPi-R3 и аналоги).
@@ -102,3 +105,17 @@ sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/ins
   - Кандидаты автоматически ранжируются по реальной скорости скачивания и задержке (RTT).
   - Кнопка **Delete all except active** открывает диалоговое окно с выбором количества профилей для автогенерации (по умолчанию `0` — только очистка без лишней траты лимитов).
   - Автоматический failover на лучший профиль при деградации текущего туннеля.
+
+---
+
+## Безопасность и проверка на VirusTotal
+
+Проект является на 100% открытым (Open Source), не содержит скрытых модулей, майнеров или сторонней телеметрии. Все скрипты и релизные сборки верифицированы антивирусными движками VirusTotal:
+
+| Компонент / Ссылка | SHA-256 контрольная сумма | Отчет VirusTotal |
+| :--- | :--- | :--- |
+| **Репозиторий проекта** (`GitHub URL`) | `https://github.com/mmikhnev/awg-warp-auto` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-Clean%20URL-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/url/aHR0cHM6Ly9naXRodWIuY29tL21taWtobmV2L2F3Zy13YXJwLWF1dG8) |
+| **Онлайн-инсталлер** (`install.sh`) | `5dcc5520cc88ea4509da9a498ceb92d829a4961bc005731b4f0d08d93a4ce3d2` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/5dcc5520cc88ea4509da9a498ceb92d829a4961bc005731b4f0d08d93a4ce3d2) |
+| **Релизный архив** (`awg-warp-auto-release.tar.gz`) | `f9ef11072608b84a40a62b0d4e5fd50bb7d46171db6fb21978037077db324355` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/f9ef11072608b84a40a62b0d4e5fd50bb7d46171db6fb21978037077db324355) |
+| **Офлайн-установщик** (`awg-warp-auto-installer.zip`) | `b7d2944637e755c7a9f10e844be8069e94cfa6dd64c66ba70edf2bf5972590f9` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/b7d2944637e755c7a9f10e844be8069e94cfa6dd64c66ba70edf2bf5972590f9) |
+
