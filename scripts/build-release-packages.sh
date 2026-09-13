@@ -167,4 +167,22 @@ RELEASE_TAR="awg-warp-auto-${VERSION}-openwrt25.12.4-filogic.tar.gz"
   (cd "$RELEASE_DIR" && sha256sum "$RELEASE_TAR" > "${RELEASE_TAR}.sha256")
 )
 
+echo "=== 6. Packaging unified installer zip ==="
+INSTALLER_DIR="$RELEASE_DIR/windows-installer"
+rm -rf "$INSTALLER_DIR"
+mkdir -p "$INSTALLER_DIR"
+cp "$REPO_DIR/release/README.txt" "$INSTALLER_DIR/" 2>/dev/null || true
+cp "$REPO_DIR/release/install-windows.bat" "$INSTALLER_DIR/"
+cp "$REPO_DIR/release/install-windows.ps1" "$INSTALLER_DIR/"
+cp "$REPO_DIR/release/install-linux.sh" "$INSTALLER_DIR/"
+cp "$RELEASE_DIR/awg-warp-auto-release.tar.gz" "$INSTALLER_DIR/"
+
+(
+  cd "$RELEASE_DIR"
+  rm -f awg-warp-auto-installer.zip awg-warp-auto-windows-installer.zip
+  zip -q -r awg-warp-auto-installer.zip windows-installer/
+  cp awg-warp-auto-installer.zip awg-warp-auto-windows-installer.zip
+)
+
 echo "=== Build finished successfully: $RELEASE_DIR/$RELEASE_TAR ==="
+echo "=== Installer archive ready: $RELEASE_DIR/awg-warp-auto-installer.zip ==="

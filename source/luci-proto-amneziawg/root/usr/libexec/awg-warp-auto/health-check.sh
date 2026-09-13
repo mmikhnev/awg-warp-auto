@@ -9,6 +9,7 @@ TIMEOUT=${2:-10}
 RESOURCES=${3:-youtube.com}
 MODE=${4:-strict}
 RESOLVERS=${5:-}
+MEASURE_SPEED=${6:-0}
 
 case "$IFACE" in ''|[!A-Za-z]*|*[!A-Za-z0-9_]* ) echo 'FAIL interface'; exit 1 ;; esac
 [ "${#IFACE}" -le 15 ] || { echo 'FAIL interface'; exit 1; }
@@ -62,13 +63,20 @@ fi
 # Local proxy DNS can supply Fake-IP, so resolve a real public address for
 # the interface-bound proof. This does not change DNS settings or routing.
 yt_ip=''
+cf_speed_ip=''
 resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
 for dns in $resolvers_list; do
-	yt_ip=$(nslookup www.youtube.com "$dns" 2>/dev/null | awk '
+	[ -z "$yt_ip" ] && yt_ip=$(nslookup www.youtube.com "$dns" 2>/dev/null | awk '
 		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
 		/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
 	')
-	[ -n "$yt_ip" ] && break
+	if [ "$MEASURE_SPEED" = 1 ] && [ -z "$cf_speed_ip" ]; then
+		cf_speed_ip=$(nslookup speed.cloudflare.com "$dns" 2>/dev/null | awk '
+			/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+			/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+		')
+	fi
+	[ -n "$yt_ip" ] && { [ "$MEASURE_SPEED" != 1 ] || [ -n "$cf_speed_ip" ]; } && break
 done
 [ -n "$yt_ip" ] || { echo 'FAIL direct_dns'; exit 1; }
 direct_code=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "www.youtube.com:443:$yt_ip" \
@@ -84,4 +92,20 @@ handshake=$(awg show "$IFACE" latest-handshakes 2>/dev/null | awk 'NR == 1 { pri
 [ "$before" != "$after" ] || { echo 'FAIL transfer'; exit 1; }
 latency=$((end - start))
 [ "$latency" -ge 0 ] 2>/dev/null || latency=0
-echo "OK $latency"
+
+speed_mbps=0
+if [ "$MEASURE_SPEED" = 1 ]; then
+	[ -n "$cf_speed_ip" ] || cf_speed_ip='172.66.0.218'
+	speed_bps=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "speed.cloudflare.com:443:$cf_speed_ip" \
+		-L -sS -o /dev/null -w '%{speed_download}' --connect-timeout 3 --max-time 12 \
+		"https://speed.cloudflare.com/__down?bytes=25000000" 2>/dev/null | cut -d. -f1)
+	if [ -n "$speed_bps" ] && [ "$speed_bps" -gt 0 ] 2>/dev/null; then
+		speed_mbps=$(( speed_bps / 125000 ))
+	fi
+fi
+
+if [ "$MEASURE_SPEED" = 1 ]; then
+	echo "OK $latency $speed_mbps"
+else
+	echo "OK $latency"
+fi

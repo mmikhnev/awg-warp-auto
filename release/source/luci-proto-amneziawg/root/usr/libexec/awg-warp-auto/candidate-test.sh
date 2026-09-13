@@ -51,7 +51,7 @@ awk '
 	BEGIN { section = "" }
 	/^\[Interface\][[:space:]]*$/ { section = "interface"; print; next }
 	/^\[Peer\][[:space:]]*$/ { section = "peer"; print; next }
-	section == "interface" && $0 ~ /^[[:space:]]*(Address|DNS|MTU|ListenPort|FwMark|ContentPaddingAddition|RekeyAfterTime|RekeyTimeout|RejectAfterTime|KeepaliveTimeout|MaxHandshakeAttempts|RandomTrailers|DisableCookies)[[:space:]]*=/ { next }
+	section == "interface" && $0 ~ /^[[:space:]]*(Address|DNS|MTU|ListenPort|FwMark)[[:space:]]*=/ { next }
 	{ print }
 ' "$CONFIG" > "$TMP" || fail config_filter
 
@@ -83,15 +83,21 @@ ip rule add oif "$DEV" priority "$PRIO" table "$TABLE" || fail rule
 # local proxy DNS. A temporary block of one public resolver is not evidence
 # that an otherwise healthy candidate is broken.
 YT_IP=''
+CF_SPEED_IP=''
 resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
 for DNS in $resolvers_list; do
-	YT_IP=$(nslookup www.youtube.com "$DNS" 2>/dev/null | awk '
+	[ -z "$YT_IP" ] && YT_IP=$(nslookup www.youtube.com "$DNS" 2>/dev/null | awk '
 		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
 		/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
 	')
-	[ -n "$YT_IP" ] && break
+	[ -z "$CF_SPEED_IP" ] && CF_SPEED_IP=$(nslookup speed.cloudflare.com "$DNS" 2>/dev/null | awk '
+		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+		/^Address: / { ip = $2; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
+	')
+	[ -n "$YT_IP" ] && [ -n "$CF_SPEED_IP" ] && break
 done
 [ -n "$YT_IP" ] || fail dns
+[ -n "$CF_SPEED_IP" ] || CF_SPEED_IP='172.66.0.218'
 
 BEFORE=$(awg show "$DEV" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
 START=$(date +%s%3N 2>/dev/null || date +%s000)
@@ -108,4 +114,14 @@ case "$CODE" in 200|204) ;; *) fail "http_$CODE" ;; esac
 
 LATENCY=$((END - START))
 [ "$LATENCY" -ge 0 ] 2>/dev/null || LATENCY=0
-echo "OK $LATENCY"
+
+# Fast download speed benchmark (25MB payload streamed directly to /dev/null, 0 disk/RAM space used)
+SPEED_MBPS=0
+SPEED_BPS=$(curl -4 --noproxy '*' --interface "$DEV" --resolve "speed.cloudflare.com:443:$CF_SPEED_IP" \
+	-L -sS -o /dev/null -w '%{speed_download}' --connect-timeout 3 --max-time 12 \
+	"https://speed.cloudflare.com/__down?bytes=25000000" 2>/dev/null | cut -d. -f1)
+if [ -n "$SPEED_BPS" ] && [ "$SPEED_BPS" -gt 0 ] 2>/dev/null; then
+	SPEED_MBPS=$(( SPEED_BPS / 125000 ))
+fi
+
+echo "OK $LATENCY $SPEED_MBPS"

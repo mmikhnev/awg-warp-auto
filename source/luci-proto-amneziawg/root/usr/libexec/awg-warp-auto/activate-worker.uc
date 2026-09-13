@@ -280,7 +280,8 @@ function runtimeHealthCheck(mode, iface) {
 	let result = "no health-check result";
 	for (let attempt = 0; attempt < attempts; attempt++) {
 		result = command(`sleep 2; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ","))} ${mode} ${shellquote(resolvers)} 2>/dev/null`);
-		if (match(result, /^OK [0-9]+$/))
+		const parts = split(trim(result), ' ');
+		if (parts[0] == 'OK' && parts[1])
 			return { ok: true, detail: result };
 	}
 	return { ok: false, detail: length(result) ? result : "no health-check result" };

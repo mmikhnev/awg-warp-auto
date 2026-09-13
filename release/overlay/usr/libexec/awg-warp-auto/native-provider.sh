@@ -34,10 +34,33 @@ tos=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 body=$(printf '{"install_id":"","tos":"%s","key":"%s","fcm_token":"","type":"ios","locale":"en_US"}' "$tos" "$pub")
 base='https://api.cloudflareclient.com/v0i1909051800/reg'
 
-rm -f "$tmp_hdr"
-http_code=$(curl -sS -D "$tmp_hdr" -o "$tmp" -w '%{http_code}' --connect-timeout 10 --max-time 20 \
-	-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
-	-d "$body" "$base" 2>/dev/null || echo "000")
+# Check if system DNS returns Fake-IP (e.g. from sing-box / Forkop) or fails
+resolve_flag=""
+test_ip=$(nslookup api.cloudflareclient.com 2>/dev/null | awk '/Address:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $2}' | tail -n 1)
+case "$test_ip" in
+	198.18.*|198.19.*|'')
+		resolve_flag="--resolve api.cloudflareclient.com:443:162.159.192.1"
+		;;
+esac
+
+cf_curl() {
+	local out_file=$1
+	shift
+	rm -f "$tmp_hdr"
+	local code
+	code=$(curl -sS -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
+		-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
+		$resolve_flag "$@" 2>/dev/null || echo "000")
+	if [ "$code" = "000" ] && [ -z "$resolve_flag" ]; then
+		rm -f "$tmp_hdr"
+		code=$(curl -sS -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
+			-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
+			--resolve api.cloudflareclient.com:443:162.159.192.1 "$@" 2>/dev/null || echo "000")
+	fi
+	printf '%s' "$code"
+}
+
+http_code=$(cf_curl "$tmp" -d "$body" "$base")
 
 if [ "$http_code" = "429" ]; then
 	ra=$(parse_retry_after)
@@ -60,11 +83,7 @@ id=$(jsonfilter -i "$tmp" -e '@.result.id')
 token=$(jsonfilter -i "$tmp" -e '@.result.token')
 [ -n "$id" ] && [ -n "$token" ] || exit 1
 
-rm -f "$tmp_hdr"
-http_code=$(curl -sS -D "$tmp_hdr" -o "$tmp" -w '%{http_code}' --connect-timeout 10 --max-time 20 \
-	-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
-	-H "Authorization: Bearer $token" -X PATCH -d '{"warp_enabled":true}' \
-	"$base/$id" 2>/dev/null || echo "000")
+http_code=$(cf_curl "$tmp" -H "Authorization: Bearer $token" -X PATCH -d '{"warp_enabled":true}' "$base/$id")
 
 if [ "$http_code" = "429" ]; then
 	ra=$(parse_retry_after)

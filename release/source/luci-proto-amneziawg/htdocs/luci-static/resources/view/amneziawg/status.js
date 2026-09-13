@@ -4,6 +4,7 @@
 'require poll';
 'require dom';
 'require ui';
+'require uci';
 
 
 var callgetAwgInstances = rpc.declare({
@@ -110,23 +111,70 @@ function redactAutoLog(value) {
 		.replace(/(\bi[1-5]\s*=\s*)[^\r\n]+/ig, '$1[redacted]');
 }
 
+function formatProfileName(entry) {
+	if (!entry) return 'WARP';
+	var id = String(entry.id || entry.fingerprint || entry.name || '');
+	var shortId = id.replace(/^p_/, '').substring(0, 4);
+	var baseName = entry.profile || entry.name || 'WARP';
+	if (baseName === 'WARP_native_cloudflare' || baseName === 'WARP_native' || baseName === 'WARP' || !baseName) {
+		return 'WARP #' + (shortId || 'auto');
+	}
+	if (shortId && !baseName.includes(shortId) && baseName.startsWith('WARP')) {
+		return baseName + ' #' + shortId;
+	}
+	return baseName;
+}
+
 function timestampToStr(timestamp) {
 	if (timestamp < 1)
 		return _('Never', 'No AmneziaWG peer handshake yet');
 
-	var seconds = (Date.now() / 1000) - timestamp;
+	var seconds = Math.max(0, Math.floor((Date.now() / 1000) - timestamp));
 	var ago;
 
 	if (seconds < 60)
 		ago = _('%ds ago').format(seconds);
 	else if (seconds < 3600)
-		ago = _('%dm ago').format(seconds / 60);
+		ago = _('%dm ago').format(Math.floor(seconds / 60));
 	else if (seconds < 86401)
-		ago = _('%dh ago').format(seconds / 3600);
+		ago = _('%dh ago').format(Math.floor(seconds / 3600));
 	else
 		ago = _('over a day ago');
 
-	return (new Date(timestamp * 1000)).toUTCString() + ' (' + ago + ')';
+	var date = new Date(timestamp * 1000);
+	var zn = null;
+	var ts = 0;
+	var hc = 0;
+	if (typeof uci !== 'undefined' && typeof uci.get === 'function') {
+		try {
+			zn = uci.get('system', '@system[0]', 'zonename');
+			ts = uci.get('system', '@system[0]', 'clock_timestyle') || 0;
+			hc = uci.get('system', '@system[0]', 'clock_hourcycle') || 0;
+		} catch(e) {}
+	}
+	if (zn)
+		zn = String(zn).trim().replace(/\s+/g, '_');
+
+	var opts = {
+		dateStyle: 'medium',
+		timeStyle: (ts == 0) ? 'medium' : 'full',
+		hourCycle: (hc == 0) ? undefined : hc
+	};
+	if (zn) {
+		try {
+			new Intl.DateTimeFormat(undefined, { timeZone: zn });
+			opts.timeZone = zn;
+		} catch(e) {}
+	}
+
+	var formattedDate;
+	try {
+		formattedDate = new Intl.DateTimeFormat(undefined, opts).format(date);
+	} catch(e) {
+		formattedDate = date.toLocaleString();
+	}
+
+	return formattedDate + ' (' + ago + ')';
 }
 
 function handleInterfaceDetails(iface) {
@@ -274,7 +322,7 @@ function handleProfileDetails(entry, profileConfigs) {
 	var items = [
 		_('Identity'), E('hr', { 'style': 'margin:4px 0 8px 0; border:0; border-top:1px solid var(--border-color-medium);' }),
 		_('Profile ID'), entry.id,
-		_('Profile Name'), entry.profile || entry.id,
+		_('Profile Name'), formatProfileName(entry),
 		_('Protocol Version'), renderAwgVariantBadge(entry.variant || conf.variant),
 		_('Status'), renderStatusBadge(entry.status),
 		_('Provider'), providerStr,
@@ -283,6 +331,7 @@ function handleProfileDetails(entry, profileConfigs) {
 		_('Endpoint & Connectivity'), E('hr', { 'style': 'margin:4px 0 8px 0; border:0; border-top:1px solid var(--border-color-medium);' }),
 		_('Endpoint'), entry.endpoint ? E('code', [ entry.endpoint ]) : '-',
 		_('Endpoint Source'), epSourceStr,
+		_('Download Speed'), entry.speed_mbps ? entry.speed_mbps + ' Mbps' : '-',
 		_('Last Test (Latency)'), testedStr + (entry.latency_ms != null ? ' (' + entry.latency_ms + ' ms RTT)' : ''),
 		_('Last Health Check'), healthStr,
 		_('Consecutive Failures'), String(entry.failure_count || 0)
@@ -319,7 +368,7 @@ function handleProfileDetails(entry, profileConfigs) {
 		}
 	}
 
-	ui.showModal(_('Profile Details: %s').format(entry.profile || entry.id), [
+	ui.showModal(_('Profile Details: %s').format(formatProfileName(entry)), [
 		ui.itemlist(E([]), items),
 		E('div', { 'class': 'right', 'style': 'margin-top:1em' }, [
 			E('button', {
@@ -377,6 +426,12 @@ function renderPeerTable(instanceName, peers) {
 }
 
 return view.extend({
+	load: function() {
+		return Promise.all([
+			uci.load('system')
+		]);
+	},
+
 	showWarpAutoMessage: function(message, isError) {
 		if (!this.autoMessageNode)
 			return;
@@ -526,7 +581,7 @@ return view.extend({
 			failover_cooldown: Math.floor(numberValue(fields.failover_cooldown.value, 10)),
 			source_url: fields.source_url.value.trim() || DEFAULT_WARP_SOURCE_URL,
 			refresh_interval: Math.floor(numberValue(fields.refresh_interval.value, 86400)),
-			minimum_ready: Math.floor(numberValue(fields.minimum_ready, 2)),
+			minimum_ready: Math.floor(numberValue(fields.minimum_ready.value, 2)),
 			health_interval: Math.floor(numberValue(fields.health_interval.value, 60)),
 			failure_threshold: Math.floor(numberValue(fields.failure_threshold.value, 3)),
 			health_timeout: Math.floor(numberValue(fields.health_timeout.value, 10)),
@@ -756,7 +811,7 @@ return view.extend({
 					E('div', [
 						E('h4', { 'style': 'margin:0 0 6px 0; font-size:16px; color:var(--text-color-high);' }, [
 							_('Active Connection: '),
-							E('strong', [ activeEntry.profile || activeEntry.id ]),
+							E('strong', [ formatProfileName(activeEntry) ]),
 							' ',
 							renderStatusBadge(activeEntry.status)
 						]),
@@ -869,9 +924,37 @@ return view.extend({
 			return true;
 		});
 
+		var activeId = (state.runtime && state.runtime.active_id) || '';
+
+		filteredPool.sort(function(a, b) {
+			var aId = String(a.id || a.fingerprint || a.name || '');
+			var bId = String(b.id || b.fingerprint || b.name || '');
+			var aIsActive = (aId && aId === activeId) || a.active === true || (String(a.status).toUpperCase() === 'ACTIVE');
+			var bIsActive = (bId && bId === activeId) || b.active === true || (String(b.status).toUpperCase() === 'ACTIVE');
+
+			if (aIsActive && !bIsActive) return -1;
+			if (!aIsActive && bIsActive) return 1;
+
+			var aSpeed = (typeof a.speed_mbps === 'number') ? a.speed_mbps : (+a.speed_mbps || 0);
+			var bSpeed = (typeof b.speed_mbps === 'number') ? b.speed_mbps : (+b.speed_mbps || 0);
+			if (bSpeed !== aSpeed) {
+				return bSpeed - aSpeed;
+			}
+
+			var aLat = (typeof a.latency_ms === 'number' && a.latency_ms >= 0) ? a.latency_ms : 99999;
+			var bLat = (typeof b.latency_ms === 'number' && b.latency_ms >= 0) ? b.latency_ms : 99999;
+			if (aLat !== bLat) {
+				return aLat - bLat;
+			}
+
+			var aCreated = +a.created_at || 0;
+			var bCreated = +b.created_at || 0;
+			return bCreated - aCreated;
+		});
+
 		var rows = filteredPool.map(L.bind(function(entry) {
 			var id = String(entry.id || entry.fingerprint || entry.name || '-');
-			var profile = entry.profile || entry.name || id;
+			var profile = formatProfileName(entry);
 			var status = String(entry.status || entry.state || '-').toUpperCase();
 			var endpoint = entry.endpoint || '-';
 			var lastTest = autoTimestampToStr(entry.last_test || entry.tested_at);
@@ -884,15 +967,17 @@ return view.extend({
 			                  entry.endpoint_source === 'custom' ? _('Custom') : (entry.endpoint_source || '-');
 
 			var actions = [];
-			if (status == 'READY' || status == 'FAILED') {
+			if (status == 'READY' || status == 'FAILED' || status == 'ACTIVE') {
 				var action = status == 'READY' ? 'activate' : 'retest';
+				var btnText = status == 'READY' ? _('Activate') : _('Retest');
 				var button = E('button', {
-					'class': 'btn cbi-button cbi-button-action',
+					'class': 'btn cbi-button' + (status == 'READY' ? ' cbi-button-action' : ''),
+					'title': status == 'ACTIVE' ? _('Benchmark speed and latency of active profile') : (status == 'READY' ? _('Activate this profile') : _('Retest this profile')),
 					'click': L.bind(function(event) {
 						event.preventDefault();
 						return this.runWarpAutoAction(action, id);
 					}, this)
-				}, [ status == 'READY' ? _('Activate') : _('Retest') ]);
+				}, [ btnText ]);
 				button.disabled = !!this.autoBusy;
 				this.autoPoolButtons.push(button);
 				actions.push(button, ' ');
@@ -916,7 +1001,7 @@ return view.extend({
 				'click': L.bind(function(event) {
 					event.preventDefault();
 					if (isCurrentActive) return;
-					if (confirm(_('Delete profile %s?').format(entry.profile || id))) {
+					if (confirm(_('Delete profile %s?').format(profile))) {
 						return this.deleteWarpAutoProfile(id);
 					}
 				}, this)
@@ -938,6 +1023,14 @@ return view.extend({
 			var conf = (state.profile_configs && state.profile_configs[id]) || {};
 			var awgBadge = renderAwgVariantBadge(entry.variant || conf.variant);
 
+			var speedBadge;
+			if (entry.speed_mbps) {
+				var badgeColor = entry.speed_mbps >= 80 ? 'cbi-badge-positive' : (entry.speed_mbps >= 30 ? 'cbi-badge-info' : 'cbi-badge-neutral');
+				speedBadge = E('span', { 'class': 'cbi-badge ' + badgeColor, 'style': 'font-weight:600' }, [ entry.speed_mbps + ' Mbps' ]);
+			} else {
+				speedBadge = E('span', { 'style': 'color:var(--text-color-medium)' }, [ '-' ]);
+			}
+
 			return E('tr', [
 				E('td', [ profileLink ]),
 				E('td', [ providerStr ]),
@@ -945,6 +1038,7 @@ return view.extend({
 				E('td', [ epSourceStr ]),
 				E('td', [ E('code', [ String(endpoint) ]) ]),
 				E('td', [ renderStatusBadge(status) ]),
+				E('td', [ speedBadge ]),
 				E('td', [ lastTest ]),
 				E('td', [ latency ]),
 				E('td', [ failures ]),
@@ -953,7 +1047,7 @@ return view.extend({
 		}, this));
 
 		if (!rows.length)
-			rows.push(E('tr', [ E('td', { 'colspan': 10 }, [ E('em', [ _('No profiles match current filter.') ]) ]) ]));
+			rows.push(E('tr', [ E('td', { 'colspan': 11 }, [ E('em', [ _('No profiles match current filter.') ]) ]) ]));
 
 		dom.content(this.autoPoolNode, E('div', [
 			summaryHeader,
@@ -965,6 +1059,7 @@ return view.extend({
 					E('th', { 'class': 'th' }, [ _('Source') ]),
 					E('th', { 'class': 'th' }, [ _('Endpoint') ]),
 					E('th', { 'class': 'th' }, [ _('State') ]),
+					E('th', { 'class': 'th' }, [ _('Speed') ]),
 					E('th', { 'class': 'th' }, [ _('Last test') ]),
 					E('th', { 'class': 'th' }, [ _('Latency (RTT)') ]),
 					E('th', { 'class': 'th' }, [ _('Failures') ]),
@@ -1567,6 +1662,144 @@ return view.extend({
 		}, this));
 	},
 
+	attachRetestAllModal: function() {
+		var statusNode = E('span', { 'style': 'font-size:14px; color:var(--text-color-high);' }, [ _('Retesting pool profiles…') ]);
+		var counterNode = E('span', { 'style': 'font-size:14px; font-weight:bold;' }, [ '0 / 0' ]);
+		var progressBar = E('div', {
+			'style': 'height:100%; width:5%; background:var(--primary-color-medium, #0069d6); border-radius:4px; transition:width 0.3s ease;'
+		});
+		var readyCount = E('strong', { 'style': 'color:var(--success-color, #2ea44f);' }, [ '0' ]);
+		var failedCount = E('strong', { 'style': 'color:var(--danger-color, #d73a49);' }, [ '0' ]);
+		var detailMsg = E('div', {
+			'style': 'font-family:var(--font-mono, monospace); font-size:12px; color:var(--text-color-medium); min-height:2.2em; word-break:break-all; background:var(--background-color-low); padding:6px 10px; border-radius:3px; border:1px solid var(--border-color-low);'
+		}, [ _('Initializing retest…') ]);
+
+		var runInBackgroundBtn = E('button', {
+			'class': 'btn cbi-button',
+			'click': function() {
+				ui.hideModal();
+			}
+		}, [ _('Run in background') ]);
+
+		var modalContent = E('div', { 'class': 'warp-auto-retest-modal', 'style': 'padding:10px 0;' }, [
+			E('p', { 'style': 'margin-bottom:12px; color:var(--text-color-medium);' }, [
+				_('Benchmarking YouTube reachability and download speed (25MB streamed to /dev/null) for all pool profiles.')
+			]),
+			E('div', { 'class': 'batch-progress-box', 'style': 'background:var(--background-color-low); border:1px solid var(--border-color-medium); border-radius:4px; padding:12px; margin-bottom:14px;' }, [
+				E('div', { 'style': 'display:flex; justify-content:space-between; margin-bottom:8px; font-weight:600;' }, [
+					statusNode, counterNode
+				]),
+				E('div', { 'style': 'height:10px; width:100%; background:var(--border-color-medium); border-radius:4px; overflow:hidden;' }, [
+					progressBar
+				]),
+				E('div', { 'style': 'display:flex; gap:16px; margin-top:10px; font-size:12px; color:var(--text-color-medium);' }, [
+					E('span', {}, [ _('OK: '), readyCount ]),
+					E('span', {}, [ _('FAILED: '), failedCount ])
+				])
+			]),
+			detailMsg,
+			E('div', { 'class': 'right', 'style': 'margin-top:16px; display:flex; justify-content:flex-end;' }, [
+				runInBackgroundBtn
+			])
+		]);
+
+		ui.showModal(_('Retesting All Profiles'), [ modalContent ]);
+		this.setWarpAutoBusy(true);
+
+		var startTime = Date.now();
+		var timeoutMs = 300000;
+
+		var cleanup = L.bind(function() {
+			this.retestPollingActive = false;
+			this.setWarpAutoBusy(false);
+			this.updateWarpAuto();
+		}, this);
+
+		this.retestPollingActive = true;
+
+		return new Promise(L.bind(function(resolve, reject) {
+			var pollInterval = setInterval(L.bind(function() {
+				if (Date.now() - startTime > timeoutMs) {
+					clearInterval(pollInterval);
+					ui.hideModal();
+					cleanup();
+					this.showNotification(_('Retest timed out.'), 'warning');
+					resolve();
+					return;
+				}
+
+				callGetWarpAutoStatus().then(L.bind(function(st) {
+					var rt = (st && st.runtime) || {};
+					var tested = rt.batch_generated || 0;
+					var requested = rt.batch_requested || 0;
+					var ready = rt.batch_ready || 0;
+					var failed = rt.batch_failed || 0;
+
+					if (requested > 0) {
+						var step = rt.batch_state === 'running' ? (tested + 0.5) : tested;
+						var pct = Math.min(100, Math.max(5, Math.round((step / requested) * 100)));
+						progressBar.style.width = pct + '%';
+						counterNode.innerText = (rt.batch_state === 'running' ? Math.min(tested + 1, requested) : tested) + ' / ' + requested;
+					}
+
+					readyCount.innerText = ready;
+					failedCount.innerText = failed;
+					if (rt.batch_message) detailMsg.innerText = rt.batch_message;
+
+					if (rt.batch_state === 'running') {
+						if (requested > 0) {
+							var currIdx = Math.min(tested + 1, requested);
+							statusNode.innerText = _('Testing profile %d of %d…').format(currIdx, requested);
+						} else {
+							statusNode.innerText = _('Testing profiles…');
+						}
+					} else if (rt.batch_state === 'complete') {
+						clearInterval(pollInterval);
+						statusNode.innerText = _('Retest completed');
+						progressBar.style.width = '100%';
+						if (requested > 0) counterNode.innerText = requested + ' / ' + requested;
+						setTimeout(L.bind(function() {
+							ui.hideModal();
+							cleanup();
+							this.showNotification(
+								_('Retest complete: %d OK, %d FAILED of %d profiles.').format(ready, failed, requested || (ready + failed)),
+								'info'
+							);
+							resolve();
+						}, this), 800);
+					} else if (rt.batch_state === 'failed') {
+						clearInterval(pollInterval);
+						statusNode.innerText = _('Retest failed');
+						setTimeout(L.bind(function() {
+							ui.hideModal();
+							cleanup();
+							this.showNotification(_('Retest failed: %s').format(rt.batch_message || _('unknown error')), 'error');
+							reject(new Error(rt.batch_message));
+						}, this), 1200);
+					}
+				}, this)).catch(function(err) {});
+			}, this), 1000);
+		}, this));
+	},
+
+	runRetestAllFlow: function() {
+		if (this.autoBusy) return;
+		this.setWarpAutoBusy(true);
+		this.showWarpAutoMessage(_('Starting retest of all profiles…'));
+
+		return callWarpAutoAction('test_all', '').then(L.bind(function(result) {
+			if (!result || result.ok === false)
+				throw new Error((result && result.error) || _('Failed to start retest'));
+
+			return this.attachRetestAllModal();
+		}, this)).catch(L.bind(function(error) {
+			ui.hideModal();
+			this.setWarpAutoBusy(false);
+			this.showWarpAutoMessage(error.message || _('Retest failed'), true);
+			this.showNotification(error.message || _('Retest failed'), 'error');
+		}, this));
+	},
+
 	attachBootstrapModal: function() {
 		var stepCheck = E('li', { 'style': 'margin-bottom:8px;' }, [ '⚪ ', _('Checking environment & requirements…') ]);
 		var stepFetch = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Generating and testing initial WARP profile…') ]);
@@ -1880,7 +2113,7 @@ return view.extend({
 		fields.native_endpoints = nativeEndpoints;
 		nativeEndpoints.addEventListener('input', dirty);
 		var refresh = makeInput('refresh_interval', 'number', { 'min': 60, 'step': 1 });
-		var minimumReady = makeInput('minimum_ready', 'number', { 'min': 0, 'step': 1 });
+		var minimumReady = makeInput('minimum_ready', 'number', { 'min': 0, 'max': 10, 'step': 1 });
 		var healthInterval = makeInput('health_interval', 'number', { 'min': 5, 'step': 1 });
 		var failureThreshold = makeInput('failure_threshold', 'number', { 'min': 1, 'step': 1 });
 		var healthTimeout = makeInput('health_timeout', 'number', { 'min': 1, 'step': 1 });
@@ -1920,10 +2153,10 @@ return view.extend({
 
 		var testButton = E('button', {
 			'class': 'btn cbi-button cbi-button-action',
-			'title': _('Run probe tests on all profiles in the pool'),
+			'title': _('Benchmark latency and download speed for all profiles in the pool'),
 			'click': L.bind(function(event) {
 				event.preventDefault();
-				return this.runWarpAutoAction('test_all');
+				return this.runRetestAllFlow();
 			}, this)
 		}, [ _('Retest all') ]);
 

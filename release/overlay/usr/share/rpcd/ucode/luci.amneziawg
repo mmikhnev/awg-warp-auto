@@ -519,15 +519,41 @@ function autoStageFile(path, filename) {
 	const check = command(`test -s ${shellquote(autoPath(id))} && echo OK`);
 	if (check != 'OK') return failure('Unable to protect generated candidate');
 
+	const short_id = substr(digest, 0, 4);
+	let prof_name = parsed.profile;
+	if (prof_name == 'WARP_native_cloudflare' || prof_name == 'WARP_native' || !prof_name)
+		prof_name = `WARP #${short_id}`;
+
 	uci.set(AUTO_CONFIG, id, 'entry');
 	uci.set(AUTO_CONFIG, id, 'fingerprint', digest);
-	uci.set(AUTO_CONFIG, id, 'profile', parsed.profile);
+	uci.set(AUTO_CONFIG, id, 'profile', prof_name);
 	uci.set(AUTO_CONFIG, id, 'endpoint', `${parsed.endpoint.host}:${parsed.endpoint.port}`);
 	uci.set(AUTO_CONFIG, id, 'status', 'NEW');
 	uci.set(AUTO_CONFIG, id, 'created_at', command('date +%s'));
 	uci.set(AUTO_CONFIG, id, 'failure_count', '0');
 	if (!uci.commit(AUTO_CONFIG)) return failure('Unable to save candidate metadata');
-	return { ok: true, id, profile: parsed.profile, endpoint: `${parsed.endpoint.host}:${parsed.endpoint.port}`, status: 'NEW' };
+	return { ok: true, id, profile: prof_name, endpoint: `${parsed.endpoint.host}:${parsed.endpoint.port}`, status: 'NEW' };
+}
+
+function autoHealth(timeout, resources, mode, measure_speed) {
+	timeout = autoNumber(timeout, 10, 3, 30);
+	resources = autoResources(resources);
+	mode = autoHealthMode(mode, 'strict');
+	const uci = cursor();
+	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	if (uci.load(AUTO_CONFIG)) {
+		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
+		if (main) {
+			resolvers = join(' ', autoResolvers(main.health_resolvers));
+			if (!resources) resources = autoResources(main.critical_resource);
+		}
+	}
+	if (!resources) resources = [ 'youtube.com' ];
+	const speed_flag = measure_speed ? '1' : '0';
+	const result = command(`/usr/libexec/awg-warp-auto/health-check.sh ${shellquote(targetInterface())} ${timeout} ${shellquote(join(resources, ','))} ${mode} ${shellquote(resolvers)} ${speed_flag} 2>/dev/null`);
+	const parts = split(trim(result), ' ');
+	if (parts[0] != 'OK' || !parts[1]) return failure('Active YouTube health check failed');
+	return { ok: true, latency_ms: +parts[1], speed_mbps: parts[2] ? +parts[2] : 0 };
 }
 
 function autoProbeCandidate(id, timeout) {
@@ -538,29 +564,21 @@ function autoProbeCandidate(id, timeout) {
 	timeout = autoNumber(timeout, 10, 3, 30);
 	const uci = cursor();
 	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	let is_active = false;
 	if (uci.load(AUTO_CONFIG)) {
 		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
-		if (main) resolvers = join(' ', autoResolvers(main.health_resolvers));
+		if (main) {
+			resolvers = join(' ', autoResolvers(main.health_resolvers));
+			if (main.active_id == id) is_active = true;
+		}
+	}
+	if (is_active) {
+		return autoHealth(timeout, [ 'youtube.com' ], 'strict', true);
 	}
 	const result = command(`/usr/libexec/awg-warp-auto/candidate-test.sh ${shellquote(autoPath(id))} ${timeout} 51822 ${shellquote(resolvers)} 2>/dev/null`);
-	if (!match(result, /^OK [0-9]+$/)) return failure('Candidate YouTube probe failed');
-	return { ok: true, latency_ms: +substr(result, 3) };
-}
-
-function autoHealth(timeout, resources, mode) {
-	timeout = autoNumber(timeout, 10, 3, 30);
-	resources = autoResources(resources);
-	mode = autoHealthMode(mode, 'strict');
-	if (!resources) return failure('Invalid critical resource list');
-	const uci = cursor();
-	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
-	if (uci.load(AUTO_CONFIG)) {
-		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
-		if (main) resolvers = join(' ', autoResolvers(main.health_resolvers));
-	}
-	const result = command(`/usr/libexec/awg-warp-auto/health-check.sh ${shellquote(targetInterface())} ${timeout} ${shellquote(join(resources, ','))} ${mode} ${shellquote(resolvers)} 2>/dev/null`);
-	if (!match(result, /^OK [0-9]+$/)) return failure('Active YouTube health check failed');
-	return { ok: true, latency_ms: +substr(result, 3) };
+	const parts = split(trim(result), ' ');
+	if (parts[0] != 'OK' || !parts[1]) return failure('Candidate YouTube probe failed');
+	return { ok: true, latency_ms: +parts[1], speed_mbps: parts[2] ? +parts[2] : 0 };
 }
 
 function autoStatus() {
@@ -585,7 +603,7 @@ function autoStatus() {
 		native_min_interval: autoNumber(main.native_min_interval, 900, 60, 86400),
 		native_endpoints: main.native_endpoint ?? [],
 		refresh_interval: autoNumber(main.refresh_interval, 86400, 300, 604800),
-		minimum_ready: autoNumber(main.minimum_ready, 2, 1, 8),
+		minimum_ready: autoNumber(main.minimum_ready, 2, 0, 10),
 		health_interval: autoNumber(main.health_interval, 60, 5, 3600),
 		health_timeout: autoNumber(main.health_timeout, 10, 3, 30),
 		failure_threshold: autoNumber(main.failure_threshold, 3, 1, 10),
@@ -624,6 +642,7 @@ function autoStatus() {
 			last_test: autoNumber(entry.last_test, 0, 0, 4294967295),
 			last_health: autoNumber(entry.last_health, 0, 0, 4294967295),
 			latency_ms: autoNumber(entry.latency_ms, 0, 0, 120000),
+			speed_mbps: autoNumber(entry.speed_mbps, 0, 0, 100000),
 			failure_count,
 			blacklist_until: autoNumber(entry.blacklist_until, 0, 0, 4294967295),
 			source_provider: entry.source_provider ?? 'unknown',
@@ -710,10 +729,10 @@ function autoStatus() {
 		batch_state: main.batch_state ?? '',
 		batch_message: main.batch_message ?? '',
 		batch_provider: main.batch_provider ?? '',
-		batch_requested: autoNumber(main.batch_requested, 0, 0, 10),
-		batch_generated: autoNumber(main.batch_generated, 0, 0, 10),
-		batch_ready: autoNumber(main.batch_ready, 0, 0, 10),
-		batch_failed: autoNumber(main.batch_failed, 0, 0, 10),
+		batch_requested: autoNumber(main.batch_requested, 0, 0, 100),
+		batch_generated: autoNumber(main.batch_generated, 0, 0, 100),
+		batch_ready: autoNumber(main.batch_ready, 0, 0, 100),
+		batch_failed: autoNumber(main.batch_failed, 0, 0, 100),
 		batch_updated: autoNumber(main.batch_updated, 0, 0, 4294967295),
 		actual_endpoint,
 		actual_public_key,
@@ -749,7 +768,7 @@ function saveAutoSettings(settings, defer_service) {
 		native_batch_limit: '' + autoNumber(settings.batch_size ?? settings.native_batch_limit, 5, 1, 10),
 		native_min_interval: '' + autoNumber(settings.native_min_interval, 900, 60, 86400),
 		refresh_interval: '' + autoNumber(settings.refresh_interval, 86400, 300, 604800),
-		minimum_ready: '' + autoNumber(settings.minimum_ready, 2, 1, 8),
+		minimum_ready: '' + autoNumber(settings.minimum_ready, 2, 0, 10),
 		health_interval: '' + autoNumber(settings.health_interval, 60, 5, 3600),
 		health_timeout: '' + autoNumber(settings.health_timeout, 10, 3, 30),
 		failure_threshold: '' + autoNumber(settings.failure_threshold, 3, 1, 10),
@@ -898,7 +917,10 @@ const methods = {
 			else if (action == 'rollback') command_line = '/usr/libexec/awg-warp-auto/daemon.sh rollback';
 			else if (action == 'native_test') command_line = '/usr/libexec/awg-warp-auto/daemon.sh batch 1';
 			else if (action == 'force_replenish') command_line = '/usr/libexec/awg-warp-auto/daemon.sh force_replenish';
-			else if (action == 'clean_replenish') command_line = '/usr/libexec/awg-warp-auto/daemon.sh clean_replenish';
+			else if (action == 'clean_replenish') {
+				const replenish_cnt = (id && match(id, /^[0-9]+$/)) ? id : '';
+				command_line = replenish_cnt ? `/usr/libexec/awg-warp-auto/daemon.sh clean_replenish ${replenish_cnt}` : '/usr/libexec/awg-warp-auto/daemon.sh clean_replenish';
+			}
 			else if (action == 'retest' && validAutoId(id)) command_line = `/usr/libexec/awg-warp-auto/daemon.sh retest ${id}`;
 			else if (action == 'delete' && validAutoId(id)) {
 				const active = cursor().get(AUTO_CONFIG, AUTO_MAIN, 'active_id');
@@ -992,9 +1014,9 @@ const methods = {
 	},
 
 	getWarpAutoHealth: {
-		args: { timeout: 'timeout', resources: 'resources', mode: 'mode' },
+		args: { timeout: 'timeout', resources: 'resources', mode: 'mode', measure_speed: 'measure_speed' },
 		call: function(req) {
-			return autoHealth(req.args?.timeout, req.args?.resources, req.args?.mode);
+			return autoHealth(req.args?.timeout, req.args?.resources, req.args?.mode, req.args?.measure_speed);
 		}
 	},
 

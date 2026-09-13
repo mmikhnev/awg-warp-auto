@@ -177,6 +177,31 @@ elif [ -d "$BASE_DIR/overlay" ]; then
 	          /etc/init.d/awg-warp-auto
 fi
 
+# Ensure AWG 3.1 binaries & netifd protocol are applied if bundled
+if [ -f "$PACKAGES_DIR/v3/awg" ]; then
+	echo "Installing AmneziaWG 3.1 userspace tool (/usr/bin/awg)..."
+	cp "$PACKAGES_DIR/v3/awg" /usr/bin/awg
+	chmod 755 /usr/bin/awg
+fi
+if [ -f "$PACKAGES_DIR/v3/amneziawg.ko" ]; then
+	kmod_dir="/lib/modules/$(uname -r)"
+	if [ -d "$kmod_dir" ]; then
+		echo "Installing AmneziaWG 3.1 kernel module ($kmod_dir/amneziawg.ko)..."
+		cp "$PACKAGES_DIR/v3/amneziawg.ko" "$kmod_dir/amneziawg.ko"
+		chmod 644 "$kmod_dir/amneziawg.ko"
+		if ! lsmod | grep -q amneziawg; then
+			echo "Loading AmneziaWG kernel module (insmod)..."
+			insmod "$kmod_dir/amneziawg.ko" 2>/dev/null || true
+		fi
+	fi
+fi
+if [ -f "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" ]; then
+	echo "Installing AWG 3.1 netifd protocol handler..."
+	mkdir -p /lib/netifd/proto
+	cp "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" /lib/netifd/proto/amneziawg.sh
+	chmod 755 /lib/netifd/proto/amneziawg.sh
+fi
+
 # Ensure all scripts and binaries have proper permissions regardless of packaging method
 chmod 755 /usr/libexec/awg-warp-auto/*.sh \
           /usr/libexec/awg-warp-auto/*.uc \

@@ -53,7 +53,7 @@ entries() { uci -q show "$CONFIG" 2>/dev/null | sed -n "s/^$CONFIG\.\([A-Za-z0-9
 entry_file() { printf '%s/%s.conf' "$POOL" "$1"; }
 
 sorted_ready_entries() {
-	local id lat current active
+	local id lat spd current active
 	active=$(option active_id)
 	current=$(now)
 	for id in $(entries); do
@@ -61,8 +61,9 @@ sorted_ready_entries() {
 		[ "$(entry "$id" status)" = READY ] || continue
 		[ "$(number "$(entry "$id" blacklist_until)" 0)" -le "$current" ] || continue
 		lat=$(number "$(entry "$id" latency_ms)" 9999)
-		echo "$lat $id"
-	done | sort -k1,1n | awk '{print $2}'
+		spd=$(number "$(entry "$id" speed_mbps)" 0)
+		echo "$spd $lat $id"
+	done | sort -k1,1nr -k2,2n | awk '{print $3}'
 }
 
 number() {
@@ -209,57 +210,98 @@ rpc_stage_file() {
 	printf '%s' "$id"
 }
 
-mark_test_result() {
-	local id=$1 reply=$2 file ok latency reason
-	file="$GENERATED/test.$$.json"
-	printf '%s' "$reply" > "$file"
-	ok=$(read_json "$file" '@.ok')
-	latency=$(read_json "$file" '@.latency_ms')
-	reason=$(read_json "$file" '@.error')
-	rm -f "$file"
+test_one() {
+	local id=$1 timeout resolvers iface result ok=false latency=0 speed=0 reason=''
+	safe_id "$id" || return 2
+	[ -r "$(entry_file "$id")" ] || return 2
+	timeout=$(number "$(option health_timeout)" 10)
+	resolvers=$(option health_resolvers)
+	[ -n "$resolvers" ] || resolvers='1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1'
+
+	if [ "$id" = "$(option active_id)" ]; then
+		iface=$(interface_name)
+		result=$(/usr/libexec/awg-warp-auto/health-check.sh "$iface" "$timeout" "youtube.com" "strict" "$resolvers" 1 2>/dev/null) || result='FAIL'
+	else
+		result=$(/usr/libexec/awg-warp-auto/candidate-test.sh "$(entry_file "$id")" "$timeout" 51822 "$resolvers" 2>/dev/null) || result='FAIL'
+	fi
+
+	case "$result" in
+		OK\ *)
+			ok=true
+			latency=$(echo "$result" | awk '{print $2}')
+			speed=$(echo "$result" | awk '{print $3}')
+			;;
+		*)
+			reason="$result"
+			;;
+	esac
+
 	set_entry "$id" last_test "$(now)"
 	if [ "$ok" = 'true' ]; then
-		set_entry "$id" status READY
+		if [ "$id" = "$(option active_id)" ]; then
+			set_entry "$id" status ACTIVE
+			set_entry "$id" health_state OK
+		else
+			set_entry "$id" status READY
+		fi
 		set_entry "$id" latency_ms "$(number "$latency" 0)"
+		set_entry "$id" speed_mbps "$(number "$speed" 0)"
 		set_entry "$id" failure_count 0
 		set_entry "$id" last_error ''
 		commit
-		log debug "candidate $id is READY"
+		log info "candidate $id test OK (latency=${latency}ms, speed=${speed}Mbps)"
 		return 0
 	fi
+
 	set_entry "$id" status FAILED
 	set_entry "$id" last_error "${reason:-candidate_test_failed}"
 	set_entry "$id" failure_count "$(( $(number "$(entry "$id" failure_count)" 0) + 1 ))"
 	commit
-	log warning "candidate $id failed isolated YouTube test"
-	# Failed probes are disposable. Keep neither private keys nor stale rows
-	# unless an operator explicitly opts into retention for investigation.
-	if [ "$(option retain_failed_profiles)" != 1 ]; then
+	log warning "candidate $id failed test"
+	if [ "$(option retain_failed_profiles)" != 1 ] && [ "$id" != "$(option active_id)" ]; then
 		remove_entry "$id"
 		commit
 	fi
 	return 1
 }
 
-test_one() {
-	local id=$1 timeout reply
-	safe_id "$id" || return 2
-	[ "$id" != "$(option active_id)" ] || { log warning 'retest refused for ACTIVE profile; use active health check'; return 2; }
-	[ -r "$(entry_file "$id")" ] || return 2
-	timeout=$(number "$(option health_timeout)" 10)
-	reply=$(ubus call luci.amneziawg testWarpAutoCandidate "{\"id\":\"$id\",\"timeout\":\"$timeout\"}" 2>/dev/null) || reply='{"ok":false,"error":"rpc"}'
-	mark_test_result "$id" "$reply"
-}
-
 test_candidates() {
-	local mode=${1:-all} id status
+	local mode=${1:-all} id status total=0 current=0 ready=0 failed=0 ep prof
 	for id in $(entries); do
 		status=$(entry "$id" status)
 		case "$mode:$status" in
-			new:NEW|all:NEW|all:READY|all:FAILED) test_one "$id" || true ;;
+			new:NEW|all:NEW|all:READY|all:FAILED|all:ACTIVE) total=$((total + 1)) ;;
+		esac
+	done
+	[ "$total" -gt 0 ] || {
+		[ "$mode" = all ] && set_batch_state complete "retest" 0 0 0 0 "No profiles to test in pool."
+		return 0
+	}
+	[ "$mode" = all ] && set_batch_state running "retest" "$total" 0 0 0 "Starting retest of $total profiles…"
+	for id in $(entries); do
+		status=$(entry "$id" status)
+		case "$mode:$status" in
+			new:NEW|all:NEW|all:READY|all:FAILED|all:ACTIVE)
+				current=$((current + 1))
+				ep=$(entry "$id" endpoint)
+				prof=$(entry "$id" profile)
+				short_id=${id#p_}
+				short_id=${short_id:0:4}
+				case "$prof" in
+					WARP_native*|WARP|'') prof="WARP #$short_id" ;;
+				esac
+				[ "$mode" = all ] && set_batch_state running "retest" "$total" "$((current - 1))" "$ready" "$failed" "Testing $current of $total: ${prof:-$id} ($ep)…"
+				if test_one "$id"; then
+					ready=$((ready + 1))
+				else
+					failed=$((failed + 1))
+				fi
+				[ "$mode" = all ] && set_batch_state running "retest" "$total" "$current" "$ready" "$failed" "Tested $current of $total: ${prof:-$id} ($ep)"
+				;;
 		esac
 	done
 	prune_pool
+	[ "$mode" = all ] && set_batch_state complete "retest" "$total" "$current" "$ready" "$failed" "Retest complete: $ready OK, $failed FAILED of $total."
 }
 
 ready_count() {
@@ -431,7 +473,7 @@ clean_replenish_unlocked() {
 	local active id removed=0 min_ready ready need provider
 	prepare_dirs || return 1
 	provider=$(provider_name)
-	min_ready=$(bounded "$(option minimum_ready)" 2 1 8)
+	min_ready=$(bounded "$(option minimum_ready)" 2 0 10)
 	set_batch_state running "$provider" "$min_ready" 0 0 0 "Deleting inactive profiles…"
 	active=$(option active_id)
 	log info "cleaning pool except active profile ($active)"
@@ -658,7 +700,7 @@ native_replenish() {
 	local attempt success=0 code
 	prepare_dirs || return 1
 	prune_pool
-	minimum=$(bounded "$(option minimum_ready)" 2 1 8)
+	minimum=$(bounded "$(option minimum_ready)" 2 0 10)
 	ready=$(ready_count)
 	need=$((minimum - ready))
 	[ "$manual" = 1 ] && need=1
