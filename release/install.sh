@@ -4,19 +4,28 @@
 # Uses verified package feed from https://github.com/Slava-Shchipunov/awg-openwrt
 set -eu
 
+# ANSI colors
+C_RESET=$(printf '\033[0m')
+C_RED=$(printf '\033[1;31m')
+C_GREEN=$(printf '\033[1;32m')
+C_YELLOW=$(printf '\033[1;33m')
+C_BLUE=$(printf '\033[1;34m')
+C_CYAN=$(printf '\033[1;36m')
+C_BOLD=$(printf '\033[1m')
+
 case "$(id -u)" in
 	0) ;;
-	*) echo "ERROR: Run as root on the OpenWrt router." >&2; exit 1 ;;
+	*) echo "${C_RED}[ERROR] Run as root on the OpenWrt router.${C_RESET}" >&2; exit 1 ;;
 esac
 
 BASE_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 AWG_UPSTREAM_BASE="https://slava-shchipunov.github.io/awg-openwrt"
 AWG_KEY_URL="$AWG_UPSTREAM_BASE/keys/awg-openwrt-feed.pem"
 
-echo "=== 1. System & Target Detection ==="
+echo "${C_CYAN}=== 1. System & Target Detection ===${C_RESET}"
 OS_RELEASE="/etc/openwrt_release"
 if [ ! -f "$OS_RELEASE" ]; then
-	echo "ERROR: /etc/openwrt_release not found. Not an OpenWrt system." >&2
+	echo "${C_RED}[ERROR] /etc/openwrt_release not found. Not an OpenWrt system.${C_RESET}" >&2
 	exit 1
 fi
 
@@ -54,7 +63,7 @@ echo "  Target/Subtarget: $TARGET/$SUBTARGET"
 echo "  Architecture    : $DISTRIB_ARCH"
 echo "  Package Manager : $PKG_MGR"
 
-echo "=== 2. Checking & Configuring AmneziaWG Upstream Feed ==="
+echo "${C_CYAN}=== 2. Checking & Configuring AmneziaWG Upstream Feed ===${C_RESET}"
 if [ "$PKG_MGR" = "apk" ]; then
 	# OpenWrt 25.x+ flow: add upstream signed APK feed
 	KEYS_DIR="/etc/apk/keys"
@@ -67,7 +76,7 @@ if [ "$PKG_MGR" = "apk" ]; then
 		echo "Installing AmneziaWG public signing key..."
 		if ! curl -fsSL --connect-timeout 10 "$AWG_KEY_URL" -o "$FEED_KEY" 2>/dev/null && \
 		   ! wget -q -O "$FEED_KEY" "$AWG_KEY_URL" 2>/dev/null; then
-			echo "WARNING: Could not download signing key from $AWG_KEY_URL. Untrusted packages will be allowed." >&2
+			echo "${C_YELLOW}[WARNING] Could not download signing key from $AWG_KEY_URL. Untrusted packages will be allowed.${C_RESET}" >&2
 		fi
 	fi
 
@@ -87,14 +96,14 @@ if [ "$PKG_MGR" = "apk" ]; then
 	fi
 
 	echo "Updating package index..."
-	apk update 2>/dev/null || echo "WARNING: apk update had warnings or network is offline. Proceeding with local packages..."
+	apk update 2>/dev/null || echo "${C_YELLOW}[WARNING] apk update had warnings or network is offline. Proceeding with local packages...${C_RESET}"
 else
 	# OpenWrt 24.x opkg flow
 	echo "Updating opkg index..."
-	opkg update 2>/dev/null || echo "WARNING: opkg update had warnings. Proceeding..."
+	opkg update 2>/dev/null || echo "${C_YELLOW}[WARNING] opkg update had warnings. Proceeding...${C_RESET}"
 fi
 
-echo "=== 3. Installing Base Dependencies ==="
+echo "${C_CYAN}=== 3. Installing Base Dependencies ===${C_RESET}"
 # Required runtime utilities including LuCI Web UI
 if [ "$PKG_MGR" = "apk" ]; then
 	apk add --allow-untrusted luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
@@ -104,7 +113,7 @@ else
 	opkg install luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || true
 fi
 
-echo "=== 4. Installing AmneziaWG Kernel Module & Userspace Tools ==="
+echo "${C_CYAN}=== 4. Installing AmneziaWG Kernel Module & Userspace Tools ===${C_RESET}"
 # Install kmod-amneziawg and amneziawg-tools from local packages or configured feeds
 PACKAGES_DIR="$BASE_DIR/packages"
 KMOD_APK=$(find "$PACKAGES_DIR" -name "kmod-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
@@ -119,12 +128,12 @@ if [ "$PKG_MGR" = "apk" ]; then
 		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
 			echo "Installing kmod-amneziawg from feed..."
 			apk add --allow-untrusted kmod-amneziawg || {
-				echo "ERROR: Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET" >&2
+				echo "${C_RED}[ERROR] Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET${C_RESET}" >&2
 				exit 1
 			}
 		fi
 	else
-		echo "kmod-amneziawg already installed."
+		echo "${C_GREEN}[✓] kmod-amneziawg already installed.${C_RESET}"
 	fi
 
 	if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
@@ -135,19 +144,19 @@ if [ "$PKG_MGR" = "apk" ]; then
 		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
 			echo "Installing amneziawg-tools from feed..."
 			apk add --allow-untrusted amneziawg-tools || {
-				echo "ERROR: Unable to install amneziawg-tools" >&2
+				echo "${C_RED}[ERROR] Unable to install amneziawg-tools${C_RESET}" >&2
 				exit 1
 			}
 		fi
 	else
-		echo "amneziawg-tools already installed."
+		echo "${C_GREEN}[✓] amneziawg-tools already installed.${C_RESET}"
 	fi
 else
 	opkg list-installed | grep -q "^kmod-amneziawg " || opkg install kmod-amneziawg
 	opkg list-installed | grep -q "^amneziawg-tools " || opkg install amneziawg-tools
 fi
 
-echo "=== 5. Installing Local Packages (quic-i1 & WARP Auto) ==="
+echo "${C_CYAN}=== 5. Installing Local Packages (quic-i1 & WARP Auto) ===${C_RESET}"
 # Check for bundled APKs in packages/
 QUIC_APK=$(find "$PACKAGES_DIR" -name "awg-warp-auto-quic-*.apk" 2>/dev/null | head -n 1 || true)
 LUCI_APK=$(find "$PACKAGES_DIR" -name "luci-proto-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
@@ -209,7 +218,7 @@ chmod 755 /usr/libexec/awg-warp-auto/*.sh \
 [ -f /usr/bin/quic-i1 ] && chmod 755 /usr/bin/quic-i1
 [ -f /lib/netifd/proto/amneziawg.sh ] && chmod 755 /lib/netifd/proto/amneziawg.sh
 
-echo "=== 6. Initializing Configuration & Services Safely ==="
+echo "${C_CYAN}=== 6. Initializing Configuration & Services Safely ===${C_RESET}"
 # Ensure default UCI config exists without overwriting user data
 if [ ! -f /etc/config/awg-warp-auto ]; then
 	if [ -f "$BASE_DIR/overlay/etc/config/awg-warp-auto" ]; then
@@ -238,46 +247,46 @@ echo "Enabling and starting awg-warp-auto service..."
 /etc/init.d/awg-warp-auto enable 2>/dev/null || true
 /etc/init.d/awg-warp-auto restart 2>/dev/null || true
 
-echo "=== 7. Post-Installation Verification ==="
+echo "${C_CYAN}=== 7. Post-Installation Verification ===${C_RESET}"
 FAILURES=0
 
 if [ -x /usr/bin/quic-i1 ]; then
-	echo "  [OK] /usr/bin/quic-i1 is present and executable"
+	echo "  ${C_GREEN}[✓]${C_RESET} /usr/bin/quic-i1 is present and executable"
 else
-	echo "  [FAIL] /usr/bin/quic-i1 missing or not executable"
+	echo "  ${C_RED}[✗]${C_RESET} /usr/bin/quic-i1 missing or not executable"
 	FAILURES=$((FAILURES + 1))
 fi
 
 if command -v awg >/dev/null 2>&1; then
-	echo "  [OK] amneziawg-tools (awg binary) is functional"
+	echo "  ${C_GREEN}[✓]${C_RESET} amneziawg-tools (awg binary) is functional"
 else
-	echo "  [FAIL] awg binary missing"
+	echo "  ${C_RED}[✗]${C_RESET} awg binary missing"
 	FAILURES=$((FAILURES + 1))
 fi
 
 if [ -f /lib/modules/$(uname -r)/amneziawg.ko ] || lsmod | grep -q amneziawg; then
-	echo "  [OK] kmod-amneziawg kernel module is present"
+	echo "  ${C_GREEN}[✓]${C_RESET} kmod-amneziawg kernel module is present"
 else
-	echo "  [FAIL] kmod-amneziawg missing"
+	echo "  ${C_RED}[✗]${C_RESET} kmod-amneziawg missing"
 	FAILURES=$((FAILURES + 1))
 fi
 
 if ubus call luci.amneziawg getWarpAutoStatus >/dev/null 2>&1; then
-	echo "  [OK] rpcd luci.amneziawg ubus service responding"
+	echo "  ${C_GREEN}[✓]${C_RESET} rpcd luci.amneziawg ubus service responding"
 else
-	echo "  [FAIL] rpcd luci.amneziawg ubus service not responding"
+	echo "  ${C_RED}[✗]${C_RESET} rpcd luci.amneziawg ubus service not responding"
 	FAILURES=$((FAILURES + 1))
 fi
 
 if [ "$FAILURES" -eq 0 ]; then
 	echo ""
-	echo "============================================================"
-	echo "WARP Auto installation completed successfully!"
-	echo "Open LuCI Web UI -> Services -> AmneziaWG to manage profiles."
-	echo "============================================================"
+	echo "${C_GREEN}============================================================${C_RESET}"
+	echo "${C_BOLD}${C_GREEN}  WARP Auto installation completed successfully!            ${C_RESET}"
+	echo "  Open LuCI Web UI -> Services -> AmneziaWG to manage.      "
+	echo "${C_GREEN}============================================================${C_RESET}"
 	exit 0
 else
 	echo ""
-	echo "ERROR: Installation finished with $FAILURES verification failure(s)." >&2
+	echo "${C_RED}[ERROR] Installation finished with $FAILURES verification failure(s).${C_RESET}" >&2
 	exit 1
 fi
