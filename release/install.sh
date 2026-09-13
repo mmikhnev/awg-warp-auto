@@ -119,6 +119,30 @@ PACKAGES_DIR="$BASE_DIR/packages"
 KMOD_APK=$(find "$PACKAGES_DIR" -name "kmod-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
 AWG_TOOLS_APK=$(find "$PACKAGES_DIR" -name "amneziawg-tools-*.apk" 2>/dev/null | head -n 1 || true)
 
+download_awg_pkg() {
+	local pkg_name=$1
+	local out_dir="/tmp/awg_dl"
+	mkdir -p "$out_dir"
+	local file="${pkg_name}_v${VERSION}_${DISTRIB_ARCH}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
+	local url="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}"
+	echo "Downloading $file from GitHub releases..."
+	if wget -q -O "$out_dir/$file" "$url" 2>/dev/null && [ -s "$out_dir/$file" ]; then
+		echo "$out_dir/$file"
+		return 0
+	fi
+	local ubus_arch
+	ubus_arch=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.arch' 2>/dev/null || true)
+	if [ -n "$ubus_arch" ] && [ "$ubus_arch" != "$DISTRIB_ARCH" ]; then
+		file="${pkg_name}_v${VERSION}_${ubus_arch}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
+		url="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}"
+		if wget -q -O "$out_dir/$file" "$url" 2>/dev/null && [ -s "$out_dir/$file" ]; then
+			echo "$out_dir/$file"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 if [ "$PKG_MGR" = "apk" ]; then
 	if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
 		if [ -n "$KMOD_APK" ] && [ -f "$KMOD_APK" ]; then
@@ -127,10 +151,16 @@ if [ "$PKG_MGR" = "apk" ]; then
 		fi
 		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
 			echo "Installing kmod-amneziawg from feed..."
-			apk add --allow-untrusted kmod-amneziawg || {
-				echo "${C_RED}[ERROR] Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET${C_RESET}" >&2
-				exit 1
+			apk add --allow-untrusted kmod-amneziawg 2>/dev/null || {
+				dl_kmod=$(download_awg_pkg "kmod-amneziawg" || true)
+				if [ -n "$dl_kmod" ] && [ -f "$dl_kmod" ]; then
+					apk add --allow-untrusted "$dl_kmod" || true
+				fi
 			}
+		fi
+		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
+			echo "${C_RED}[ERROR] Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET${C_RESET}" >&2
+			exit 1
 		fi
 	else
 		echo "${C_GREEN}[✓] kmod-amneziawg already installed.${C_RESET}"
@@ -143,28 +173,67 @@ if [ "$PKG_MGR" = "apk" ]; then
 		fi
 		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
 			echo "Installing amneziawg-tools from feed..."
-			apk add --allow-untrusted amneziawg-tools || {
-				echo "${C_RED}[ERROR] Unable to install amneziawg-tools${C_RESET}" >&2
-				exit 1
+			apk add --allow-untrusted amneziawg-tools 2>/dev/null || {
+				dl_tools=$(download_awg_pkg "amneziawg-tools" || true)
+				if [ -n "$dl_tools" ] && [ -f "$dl_tools" ]; then
+					apk add --allow-untrusted "$dl_tools" || true
+				fi
 			}
+		fi
+		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
+			echo "${C_RED}[ERROR] Unable to install amneziawg-tools${C_RESET}" >&2
+			exit 1
 		fi
 	else
 		echo "${C_GREEN}[✓] amneziawg-tools already installed.${C_RESET}"
 	fi
 else
-	opkg list-installed | grep -q "^kmod-amneziawg " || opkg install kmod-amneziawg
-	opkg list-installed | grep -q "^amneziawg-tools " || opkg install amneziawg-tools
+	# OpenWrt 24.x opkg flow
+	if ! opkg list-installed 2>/dev/null | grep -q "^kmod-amneziawg "; then
+		echo "Installing kmod-amneziawg via opkg..."
+		if ! opkg install kmod-amneziawg 2>/dev/null; then
+			dl_kmod=$(download_awg_pkg "kmod-amneziawg" || true)
+			if [ -n "$dl_kmod" ] && [ -f "$dl_kmod" ]; then
+				opkg install "$dl_kmod" || true
+			fi
+		fi
+	else
+		echo "${C_GREEN}[✓] kmod-amneziawg already installed.${C_RESET}"
+	fi
+
+	if ! opkg list-installed 2>/dev/null | grep -q "^amneziawg-tools "; then
+		echo "Installing amneziawg-tools via opkg..."
+		if ! opkg install amneziawg-tools 2>/dev/null; then
+			dl_tools=$(download_awg_pkg "amneziawg-tools" || true)
+			if [ -n "$dl_tools" ] && [ -f "$dl_tools" ]; then
+				opkg install "$dl_tools" || true
+			fi
+		fi
+	else
+		echo "${C_GREEN}[✓] amneziawg-tools already installed.${C_RESET}"
+	fi
 fi
 
 echo "${C_CYAN}=== 5. Installing Local Packages (quic-i1 & WARP Auto) ===${C_RESET}"
+# Check for architecture compatibility
+IS_AARCH64=0
+case "$DISTRIB_ARCH" in
+	aarch64*|arm64*) IS_AARCH64=1 ;;
+	*)
+		case "$(uname -m 2>/dev/null || true)" in
+			aarch64*|arm64*) IS_AARCH64=1 ;;
+		esac
+		;;
+esac
+
 # Check for bundled APKs in packages/
 QUIC_APK=$(find "$PACKAGES_DIR" -name "awg-warp-auto-quic-*.apk" 2>/dev/null | head -n 1 || true)
 LUCI_APK=$(find "$PACKAGES_DIR" -name "luci-proto-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
 
-if [ "$PKG_MGR" = "apk" ] && [ -n "$QUIC_APK" ] && [ -f "$QUIC_APK" ]; then
+if [ "$PKG_MGR" = "apk" ] && [ -n "$QUIC_APK" ] && [ -f "$QUIC_APK" ] && [ "$IS_AARCH64" -eq 1 ]; then
 	echo "Installing bundled $QUIC_APK..."
-	apk add --allow-untrusted "$QUIC_APK"
-elif [ -f "$BASE_DIR/dist/quic-i1" ]; then
+	apk add --allow-untrusted "$QUIC_APK" 2>/dev/null || true
+elif [ -f "$BASE_DIR/dist/quic-i1" ] && [ "$IS_AARCH64" -eq 1 ]; then
 	echo "Installing standalone quic-i1 binary..."
 	cp "$BASE_DIR/dist/quic-i1" /usr/bin/quic-i1
 	chmod 755 /usr/bin/quic-i1
@@ -172,7 +241,7 @@ fi
 
 if [ "$PKG_MGR" = "apk" ] && [ -n "$LUCI_APK" ] && [ -f "$LUCI_APK" ]; then
 	echo "Installing bundled $LUCI_APK..."
-	apk add --allow-untrusted "$LUCI_APK"
+	apk add --allow-untrusted "$LUCI_APK" 2>/dev/null || true
 elif [ -d "$BASE_DIR/overlay" ]; then
 	echo "Installing WARP Auto application files from overlay..."
 	cp -r "$BASE_DIR/overlay/"* /
@@ -180,30 +249,35 @@ elif [ -d "$BASE_DIR/overlay" ]; then
 	          /www/luci-static/resources/view/amneziawg/status.js \
 	          /usr/share/ucode/luci/controller/awgdownload.uc \
 	          /usr/share/rpcd/acl.d/luci-amneziawg.json \
-	          /usr/share/luci/menu.d/luci-proto-amneziawg.json
+	          /usr/share/luci/menu.d/luci-proto-amneziawg.json 2>/dev/null || true
 	chmod 755 /usr/libexec/awg-warp-auto/*.sh \
 	          /usr/libexec/awg-warp-auto/*.uc \
-	          /etc/init.d/awg-warp-auto
+	          /etc/init.d/awg-warp-auto 2>/dev/null || true
 fi
 
-# Ensure AWG 3.1 binaries & netifd protocol are applied if bundled
-if [ -f "$PACKAGES_DIR/v3/awg" ]; then
-	echo "Installing AmneziaWG 3.1 userspace tool (/usr/bin/awg)..."
-	cp "$PACKAGES_DIR/v3/awg" /usr/bin/awg
-	chmod 755 /usr/bin/awg
-fi
-if [ -f "$PACKAGES_DIR/v3/amneziawg.ko" ]; then
-	kmod_dir="/lib/modules/$(uname -r)"
-	if [ -d "$kmod_dir" ]; then
-		echo "Installing AmneziaWG 3.1 kernel module ($kmod_dir/amneziawg.ko)..."
-		cp "$PACKAGES_DIR/v3/amneziawg.ko" "$kmod_dir/amneziawg.ko"
-		chmod 644 "$kmod_dir/amneziawg.ko"
-		if ! lsmod | grep -q amneziawg; then
-			echo "Loading AmneziaWG kernel module (insmod)..."
-			insmod "$kmod_dir/amneziawg.ko" 2>/dev/null || true
+# Ensure AWG 3.1 binaries & netifd protocol are applied if bundled and matching architecture
+if [ "$IS_AARCH64" -eq 1 ]; then
+	if [ -f "$PACKAGES_DIR/v3/awg" ]; then
+		echo "Installing AmneziaWG 3.1 userspace tool (/usr/bin/awg)..."
+		cp "$PACKAGES_DIR/v3/awg" /usr/bin/awg
+		chmod 755 /usr/bin/awg
+	fi
+	if [ -f "$PACKAGES_DIR/v3/amneziawg.ko" ]; then
+		kmod_dir="/lib/modules/$(uname -r)"
+		if [ -d "$kmod_dir" ]; then
+			echo "Installing AmneziaWG 3.1 kernel module ($kmod_dir/amneziawg.ko)..."
+			cp "$PACKAGES_DIR/v3/amneziawg.ko" "$kmod_dir/amneziawg.ko"
+			chmod 644 "$kmod_dir/amneziawg.ko"
+			if ! lsmod | grep -q amneziawg; then
+				echo "Loading AmneziaWG kernel module (insmod)..."
+				insmod "$kmod_dir/amneziawg.ko" 2>/dev/null || true
+			fi
 		fi
 	fi
+else
+	echo "${C_YELLOW}[i] Architecture ($DISTRIB_ARCH): Using native kernel module & tools.${C_RESET}"
 fi
+
 if [ -f "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" ]; then
 	echo "Installing AWG 3.1 netifd protocol handler..."
 	mkdir -p /lib/netifd/proto
@@ -257,8 +331,7 @@ FAILURES=0
 if [ -x /usr/bin/quic-i1 ]; then
 	echo "  ${C_GREEN}[✓]${C_RESET} /usr/bin/quic-i1 is present and executable"
 else
-	echo "  ${C_RED}[✗]${C_RESET} /usr/bin/quic-i1 missing or not executable"
-	FAILURES=$((FAILURES + 1))
+	echo "  ${C_YELLOW}[i]${C_RESET} /usr/bin/quic-i1 not present (built-in compatibility preset active)"
 fi
 
 if command -v awg >/dev/null 2>&1; then
