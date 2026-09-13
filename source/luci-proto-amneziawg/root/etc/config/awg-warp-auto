@@ -1,5 +1,5 @@
 config awg_warp_auto 'main'
-	option enabled '0'
+	option enabled '1'
 	option automatic_failover '1'
 	option failover_cooldown '10'
 	option source_url 'https://warp-generation.github.io'

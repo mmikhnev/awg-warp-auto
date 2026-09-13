@@ -227,13 +227,17 @@ if [ ! -f /etc/config/awg-warp-auto ]; then
 	fi
 fi
 
-# Ensure default native_quic_mode is dynamic
+# Ensure default native_quic_mode is dynamic and enabled is 1
 if [ -f /etc/config/awg-warp-auto ]; then
+	current_enabled=$(uci -q get awg-warp-auto.main.enabled || true)
+	if [ -z "$current_enabled" ] || [ "$current_enabled" = "0" ]; then
+		uci set awg-warp-auto.main.enabled='1'
+	fi
 	current_mode=$(uci -q get awg-warp-auto.main.native_quic_mode || true)
 	if [ "$current_mode" != "dynamic" ] && [ "$current_mode" != "fallback" ]; then
 		uci set awg-warp-auto.main.native_quic_mode='dynamic'
-		uci commit awg-warp-auto
 	fi
+	uci commit awg-warp-auto 2>/dev/null || true
 fi
 
 # Clear LuCI cache
