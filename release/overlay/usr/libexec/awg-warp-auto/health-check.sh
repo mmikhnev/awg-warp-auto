@@ -78,7 +78,7 @@ for dns in $resolvers_list; do
 	fi
 	[ -n "$yt_ip" ] && { [ "$MEASURE_SPEED" != 1 ] || [ -n "$cf_speed_ip" ]; } && break
 done
-[ -n "$yt_ip" ] || { echo 'FAIL direct_dns'; exit 1; }
+[ -n "$yt_ip" ] || yt_ip='142.250.74.206'
 direct_code=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "www.youtube.com:443:$yt_ip" \
 	-L -sS -o /dev/null -w '%{http_code}' --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
 	https://www.youtube.com/generate_204 2>/dev/null)

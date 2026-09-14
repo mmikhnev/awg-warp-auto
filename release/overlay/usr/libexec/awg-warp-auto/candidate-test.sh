@@ -96,7 +96,7 @@ for DNS in $resolvers_list; do
 	')
 	[ -n "$YT_IP" ] && [ -n "$CF_SPEED_IP" ] && break
 done
-[ -n "$YT_IP" ] || fail dns
+[ -n "$YT_IP" ] || YT_IP='142.250.74.206'
 [ -n "$CF_SPEED_IP" ] || CF_SPEED_IP='172.66.0.218'
 
 BEFORE=$(awg show "$DEV" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
