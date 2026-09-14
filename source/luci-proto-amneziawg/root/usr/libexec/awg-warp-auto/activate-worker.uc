@@ -248,14 +248,25 @@ function activateAwg(iface) {
 	iface = validInterfaceName(iface) ?? targetInterface();
 	const bus = connect();
 	if (!bus) return false;
-	bus.call(`network.interface.${iface}`, 'down', {});
+
 	bus.call('network', 'reload', {});
-	bus.call(`network.interface.${iface}`, 'up', {});
-	for (let attempt = 0; attempt < 8; attempt++) {
+	command(`ifup ${shellquote(iface)} 2>/dev/null`);
+
+	for (let attempt = 0; attempt < 15; attempt++) {
 		const status = bus.call(`network.interface.${iface}`, 'status', {});
 		if (status?.available == true && status?.up == true) return true;
+
+		bus.call(`network.interface.${iface}`, 'up', {});
+		command(`ifup ${shellquote(iface)} 2>/dev/null`);
 		command('sleep 1');
 	}
+
+	const awgCheck = trim(command(`awg show ${shellquote(iface)} 2>/dev/null`));
+	if (length(awgCheck)) return true;
+
+	const devStatus = trim(command(`ip link show dev ${shellquote(iface)} 2>/dev/null`));
+	if (length(devStatus) && index(devStatus, 'state UP') >= 0) return true;
+
 	return false;
 }
 
@@ -289,7 +300,8 @@ function runtimeHealthCheck(mode, iface) {
 
 /* Main Execution */
 const id = ARGV[0];
-const health_mode = autoHealthMode(ARGV[1], 'strict');
+const configured_health = cursor().get(AUTO_CONFIG, AUTO_MAIN, "health_mode");
+const health_mode = autoHealthMode(ARGV[1] ?? configured_health, "direct");
 const op_id = ARGV[2] ?? sprintf("op_act_%d", time());
 
 if (!validAutoId(id)) {
@@ -364,6 +376,8 @@ if (managedPeer != peerSection) uci.delete("network", managedPeer);
 
 uci.set("network", iface, "interface");
 uci.set("network", iface, "proto", "amneziawg");
+uci.set("network", iface, "auto", "1");
+uci.set("network", iface, "nohostroute", "1");
 uci.set("network", iface, "defaultroute", "0");
 uci.set("network", iface, "peerdns", "0");
 uci.set("network", iface, "private_key", parsed.interface.privatekey);

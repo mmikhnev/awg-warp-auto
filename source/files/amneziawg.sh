@@ -21,6 +21,8 @@ proto_amneziawg_init_config() {
 	proto_config_add_int "listen_port"
 	proto_config_add_int "mtu"
 	proto_config_add_string "fwmark"
+	proto_config_add_array "addresses"
+	proto_config_add_boolean "nohostroute"
 	proto_config_add_int "awg_jc"
 	proto_config_add_int "awg_jmin"
 	proto_config_add_int "awg_jmax"

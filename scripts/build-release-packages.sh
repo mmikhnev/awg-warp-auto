@@ -87,6 +87,9 @@ cp "$SRC/root/usr/share/ucode/luci/controller/awgdownload.uc" "$LUCI_ROOT/usr/sh
 cp "$SRC/root/usr/libexec/awg-warp-auto/"* "$LUCI_ROOT/usr/libexec/awg-warp-auto/"
 cp "$SRC/root/etc/config/awg-warp-auto" "$LUCI_ROOT/etc/config/"
 cp "$SRC/root/etc/init.d/awg-warp-auto" "$LUCI_ROOT/etc/init.d/"
+mkdir -p "$LUCI_ROOT/lib/netifd/proto"
+cp "$REPO_DIR/source/files/amneziawg.sh" "$LUCI_ROOT/lib/netifd/proto/amneziawg.sh"
+chmod 755 "$LUCI_ROOT/lib/netifd/proto/amneziawg.sh"
 
 chmod 644 "$LUCI_ROOT/www/luci-static/resources/view/amneziawg/status.js" \
           "$LUCI_ROOT/www/luci-static/resources/protocol/amneziawg.js" \
@@ -110,6 +113,7 @@ chmod 755 "$LUCI_ROOT/usr/libexec/awg-warp-auto/activate-worker.uc" \
 cat << "LISTEOF" > "$LUCI_ROOT/lib/apk/packages/luci-proto-amneziawg.list"
 /etc/config/awg-warp-auto
 /etc/init.d/awg-warp-auto
+/lib/netifd/proto/amneziawg.sh
 /usr/libexec/awg-warp-auto/activate-worker.uc
 /usr/libexec/awg-warp-auto/candidate-test.sh
 /usr/libexec/awg-warp-auto/daemon.sh
