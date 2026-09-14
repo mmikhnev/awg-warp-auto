@@ -137,21 +137,46 @@ download_awg_pkg() {
 	local out_dir="/tmp/awg_dl"
 	mkdir -p "$out_dir"
 	local file="${pkg_name}_v${VERSION}_${DISTRIB_ARCH}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
-	local url="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}"
+	local urls="
+https://gh-proxy.com/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+https://ghproxy.net/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+"
 	echo "Downloading $file from GitHub releases..."
-	if wget -q -O "$out_dir/$file" "$url" 2>/dev/null && [ -s "$out_dir/$file" ]; then
-		echo "$out_dir/$file"
-		return 0
-	fi
+	for url in $urls; do
+		if command -v curl >/dev/null 2>&1; then
+			curl -k -fsSL --connect-timeout 8 --max-time 60 "$url" -o "$out_dir/$file" 2>/dev/null || true
+		fi
+		if [ ! -s "$out_dir/$file" ] && command -v wget >/dev/null 2>&1; then
+			wget -q --no-check-certificate -T 10 -O "$out_dir/$file" "$url" 2>/dev/null || true
+		fi
+		if [ -s "$out_dir/$file" ]; then
+			echo "$out_dir/$file"
+			return 0
+		fi
+	done
+
 	local ubus_arch
 	ubus_arch=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.arch' 2>/dev/null || true)
 	if [ -n "$ubus_arch" ] && [ "$ubus_arch" != "$DISTRIB_ARCH" ]; then
 		file="${pkg_name}_v${VERSION}_${ubus_arch}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
-		url="https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}"
-		if wget -q -O "$out_dir/$file" "$url" 2>/dev/null && [ -s "$out_dir/$file" ]; then
-			echo "$out_dir/$file"
-			return 0
-		fi
+		urls="
+https://gh-proxy.com/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+https://ghproxy.net/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
+"
+		for url in $urls; do
+			if command -v curl >/dev/null 2>&1; then
+				curl -k -fsSL --connect-timeout 8 --max-time 60 "$url" -o "$out_dir/$file" 2>/dev/null || true
+			fi
+			if [ ! -s "$out_dir/$file" ] && command -v wget >/dev/null 2>&1; then
+				wget -q --no-check-certificate -T 10 -O "$out_dir/$file" "$url" 2>/dev/null || true
+			fi
+			if [ -s "$out_dir/$file" ]; then
+				echo "$out_dir/$file"
+				return 0
+			fi
+		done
 	fi
 	return 1
 }

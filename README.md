@@ -14,9 +14,9 @@
 Подключитесь к роутеру по SSH и выполните:
 
 ```sh
-sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)
+sh -c "$(wget --no-check-certificate -qO- https://gh-proxy.com/https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh 2>/dev/null || wget --no-check-certificate -qO- https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh 2>/dev/null || curl -kfsSL https://gh-proxy.com/https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"
 ```
-*(Для стандартного busybox `ash` на чистом роутере также подходит: `sh -c "$(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"`)*.
+*(Команда автоматически использует защищенное от блокировок зеркало, работает на стандартном BusyBox `ash` без установленных корневых сертификатов и не ломается при перехвате Fake-IP).*
 
 ---
 
@@ -127,7 +127,7 @@ sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/ins
 | Компонент / Ссылка | SHA-256 контрольная сумма | Отчет VirusTotal |
 | :--- | :--- | :--- |
 | **Репозиторий проекта** (`GitHub URL`) | `https://github.com/mmikhnev/awg-warp-auto` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-Clean%20URL-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/url/aHR0cHM6Ly9naXRodWIuY29tL21taWtobmV2L2F3Zy13YXJwLWF1dG8) |
-| **Онлайн-инсталлер** (`install.sh`) | `fe3d43ab719bb9e7ebd6ad090a6491192a785edb5a1e75fcd77687c28ac876fc` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/fe3d43ab719bb9e7ebd6ad090a6491192a785edb5a1e75fcd77687c28ac876fc) |
-| **Релизный архив** (`awg-warp-auto-release.tar.gz`) | `49ec02315bfb3384b623a3c4b2a7d58ee2d09f526f6cae22ce5b89ed1a0dd267` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/49ec02315bfb3384b623a3c4b2a7d58ee2d09f526f6cae22ce5b89ed1a0dd267) |
-| **Офлайн-установщик** (`awg-warp-auto-installer.zip`) | `27f2bea444e446a5b61f006b33ffe68afd01e6e95fad8c2d1f5a4575bd80b8ef` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/27f2bea444e446a5b61f006b33ffe68afd01e6e95fad8c2d1f5a4575bd80b8ef) |
+| **Онлайн-инсталлер** (`install.sh`) | `010c68832bda4a0a9d673d5093e7934e4acce371bb62d3bfdd059c3e81681387` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/010c68832bda4a0a9d673d5093e7934e4acce371bb62d3bfdd059c3e81681387) |
+| **Релизный архив** (`awg-warp-auto-release.tar.gz`) | `5b425bb0ed191179f60c03730d8acd2cfc2a5d187fe381a02e2bbca96bb0500b` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/5b425bb0ed191179f60c03730d8acd2cfc2a5d187fe381a02e2bbca96bb0500b) |
+| **Офлайн-установщик** (`awg-warp-auto-installer.zip`) | `31f4180d49c3166fc0f873ae812f600a4c8779bc00f5e99a6bcbb2f1bbe895a6` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/31f4180d49c3166fc0f873ae812f600a4c8779bc00f5e99a6bcbb2f1bbe895a6) |
 

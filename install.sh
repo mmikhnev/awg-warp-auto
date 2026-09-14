@@ -148,6 +148,39 @@ fi
 # --------------------------------------------------------------------
 ARCHIVE="/tmp/awg-warp-auto-release.tar.gz"
 
+download_with_fallback() {
+	local target="$1"
+	shift
+	rm -f "$target"
+	for u in "$@"; do
+		# 1. curl (trusted then insecure)
+		if command -v curl >/dev/null 2>&1; then
+			if curl -fsSL --connect-timeout 8 --max-time 120 "$u" -o "$target" 2>/dev/null && [ -s "$target" ]; then
+				return 0
+			fi
+			if curl -k -fsSL --connect-timeout 8 --max-time 120 "$u" -o "$target" 2>/dev/null && [ -s "$target" ]; then
+				return 0
+			fi
+		fi
+		# 2. wget (no-check-certificate)
+		if command -v wget >/dev/null 2>&1; then
+			if wget -q --no-check-certificate -T 15 -O "$target" "$u" 2>/dev/null && [ -s "$target" ]; then
+				return 0
+			fi
+			if wget -q -T 15 -O "$target" "$u" 2>/dev/null && [ -s "$target" ]; then
+				return 0
+			fi
+		fi
+		# 3. uclient-fetch
+		if command -v uclient-fetch >/dev/null 2>&1; then
+			if uclient-fetch --no-check-certificate -q -T 15 -O "$target" "$u" 2>/dev/null && [ -s "$target" ]; then
+				return 0
+			fi
+		fi
+	done
+	return 1
+}
+
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 if [ -f "$SCRIPT_DIR/dist/awg-warp-auto-release.tar.gz" ]; then
 	echo "${C_CYAN}---> Используется локальный релизный архив из dist/...${C_RESET}"
@@ -155,43 +188,55 @@ if [ -f "$SCRIPT_DIR/dist/awg-warp-auto-release.tar.gz" ]; then
 elif [ -f "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" ]; then
 	echo "${C_CYAN}---> Используется локальный релизный архив из release/...${C_RESET}"
 	cp "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" "$ARCHIVE"
+elif [ -s "$ARCHIVE" ] && [ "$(wc -c < "$ARCHIVE" 2>/dev/null || echo 0)" -gt 10000 ]; then
+	echo "${C_CYAN}---> Обнаружен предварительно загруженный архив $ARCHIVE...${C_RESET}"
 else
-	echo "${C_CYAN}---> Скачивание релизного пакета с GitHub...${C_RESET}"
-	rm -f "$ARCHIVE"
-	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL --connect-timeout 15 --max-time 180 "$RELEASE_URL" -o "$ARCHIVE" || true
-	fi
-	if [ ! -s "$ARCHIVE" ]; then
-		wget -q -O "$ARCHIVE" "$RELEASE_URL" || true
-	fi
-	if [ ! -s "$ARCHIVE" ]; then
-		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив с GitHub ($RELEASE_URL)!${C_RESET}" >&2
-		echo "Проверьте доступность интернета на роутере." >&2
+	echo "${C_CYAN}---> Скачивание релизного пакета (GitHub + зеркала)...${C_RESET}"
+	ARCHIVE_URLS="
+https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
+https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
+https://ghproxy.net/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
+"
+	# shellcheck disable=SC2086
+	if ! download_with_fallback "$ARCHIVE" $ARCHIVE_URLS; then
+		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив с GitHub и зеркал!${C_RESET}" >&2
+		echo "" >&2
+		echo "${C_YELLOW}Возможные причины:${C_RESET}" >&2
+		echo " 1. ${C_BOLD}Перехват трафика DNS/Fake-IP:${C_RESET} если на роутере запущен Forkop или Sing-box" >&2
+		echo "    без работающего туннеля, роутер перенаправляет запросы в себя (198.18.0.x)." >&2
+		echo "    Временно остановите службу перед установкой:" >&2
+		echo "      ${C_CYAN}/etc/init.d/forkop stop${C_RESET}  (или ${C_CYAN}/etc/init.d/sing-box stop${C_RESET})" >&2
+		echo " 2. ${C_BOLD}Офлайн-установка:${C_RESET} скопируйте awg-warp-auto-release.tar.gz в /tmp роутера" >&2
+		echo "    и запустите инсталлер повторно." >&2
 		exit 1
 	fi
+fi
 
-	# Проверка целостности SHA-256
-	echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
-	CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS"
-	EXPECTED_SHA=""
-	if command -v curl >/dev/null 2>&1; then
-		EXPECTED_SHA=$(curl -fsSL --connect-timeout 10 "$CHECKSUM_URL" 2>/dev/null | grep "awg-warp-auto-release\.tar\.gz" | awk '{print $1}' || true)
+# Проверка целостности SHA-256
+echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
+CHECKSUM_URLS="
+https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
+https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
+https://ghproxy.net/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
+"
+TMP_CHECKSUMS="/tmp/SHA256SUMS.$$"
+EXPECTED_SHA=""
+if download_with_fallback "$TMP_CHECKSUMS" $CHECKSUM_URLS; then
+	EXPECTED_SHA=$(grep "awg-warp-auto-release\.tar\.gz" "$TMP_CHECKSUMS" 2>/dev/null | awk '{print $1}' || true)
+	rm -f "$TMP_CHECKSUMS"
+fi
+
+if [ -n "$EXPECTED_SHA" ]; then
+	ACTUAL_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+	if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+		echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает!${C_RESET}" >&2
+		echo "Ожидалось: $EXPECTED_SHA" >&2
+		echo "Получено:   $ACTUAL_SHA" >&2
+		echo "Возможна ошибка загрузки или подмена файла. Установка прервана." >&2
+		rm -f "$ARCHIVE"
+		exit 1
 	fi
-	if [ -z "$EXPECTED_SHA" ]; then
-		EXPECTED_SHA=$(wget -q -O - "$CHECKSUM_URL" 2>/dev/null | grep "awg-warp-auto-release\.tar\.gz" | awk '{print $1}' || true)
-	fi
-	if [ -n "$EXPECTED_SHA" ]; then
-		ACTUAL_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
-		if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-			echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает!${C_RESET}" >&2
-			echo "Ожидалось: $EXPECTED_SHA" >&2
-			echo "Получено:   $ACTUAL_SHA" >&2
-			echo "Возможна ошибка загрузки или подмена файла. Установка прервана." >&2
-			rm -f "$ARCHIVE"
-			exit 1
-		fi
-		echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
-	fi
+	echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
 fi
 
 # Резервная копия текущей сети перед распаковкой и установкой
