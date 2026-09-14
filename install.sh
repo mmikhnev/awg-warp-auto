@@ -36,6 +36,7 @@ fi
 echo "${C_CYAN}======================================================================${C_RESET}"
 echo "${C_BOLD}${C_CYAN}          WARP Auto & AmneziaWG — Управление на OpenWrt               ${C_RESET}"
 echo "${C_CYAN}======================================================================${C_RESET}"
+sleep 0.3 2>/dev/null || true
 echo ""
 echo "${C_BOLD}Выберите действие:${C_RESET}"
 echo "  ${C_GREEN}[1] Установка${C_RESET}  — полная установка AmneziaWG v3.1 + WARP Auto"
@@ -137,8 +138,11 @@ if [ "$ACTION" = "uninstall" ]; then
 	rm -rf /tmp/luci-indexcache /tmp/awg-warp-auto* /tmp/quic*
 
 	echo "${C_CYAN}[4/5]${C_RESET} Перезапуск служб сети и веб-интерфейса..."
-	/etc/init.d/network reload 2>/dev/null || true
+	ubus call network reload 2>/dev/null || true
 	/etc/init.d/rpcd restart 2>/dev/null || true
+	if [ -f /etc/init.d/forkop ]; then
+		/etc/init.d/forkop restart 2>/dev/null || true
+	fi
 
 	echo "${C_CYAN}[5/5]${C_RESET} Завершено."
 	echo ""

@@ -321,7 +321,7 @@ if [ -f "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" ]; then
 	mkdir -p /lib/netifd/proto
 	cp "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" /lib/netifd/proto/amneziawg.sh
 	chmod 755 /lib/netifd/proto/amneziawg.sh
-	killall -HUP netifd 2>/dev/null || /etc/init.d/network reload 2>/dev/null || ubus call network reload 2>/dev/null || true
+	ubus call network reload 2>/dev/null || true
 fi
 
 # Ensure all scripts and binaries have proper permissions regardless of packaging method
