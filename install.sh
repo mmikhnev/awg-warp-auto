@@ -62,24 +62,251 @@ prompt_user() {
 	eval "$var_name=\$input"
 }
 
+run_diagnostics() {
+	local PASS_ICON="${C_GREEN}[✓]${C_RESET}"
+	local WARN_ICON="${C_YELLOW}[!]${C_RESET}"
+	local FAIL_ICON="${C_RED}[✗]${C_RESET}"
+	local WARNINGS=0 ERRORS=0
+
+	echo ""
+	echo "${C_BOLD}${C_CYAN}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_CYAN}      WARP Auto & AmneziaWG — Экспресс-диагностика системы            ${C_RESET}"
+	echo "${C_BOLD}${C_CYAN}======================================================================${C_RESET}"
+	echo ""
+
+	echo "${C_BOLD}1. Информация о системе:${C_RESET}"
+	if [ -f /etc/openwrt_release ]; then
+		. /etc/openwrt_release
+		echo "   OS           : OpenWrt ${DISTRIB_RELEASE:-unknown}"
+		echo "   Target       : ${DISTRIB_TARGET:-unknown}"
+		echo "   Arch         : ${DISTRIB_ARCH:-unknown}"
+		echo "   Kernel       : $(uname -r 2>/dev/null || echo unknown)"
+	else
+		echo "   $FAIL_ICON Не является OpenWrt (/etc/openwrt_release не найден)"
+		ERRORS=$((ERRORS + 1))
+	fi
+
+	if command -v apk >/dev/null 2>&1; then
+		echo "   Пакетный мен.: apk (OpenWrt 25.x+)"
+	elif command -v opkg >/dev/null 2>&1; then
+		echo "   Пакетный мен.: opkg (OpenWrt 24.x/legacy)"
+	else
+		echo "   $FAIL_ICON Пакетный менеджер apk/opkg не найден"
+		ERRORS=$((ERRORS + 1))
+	fi
+
+	local mem_free
+	mem_free=$(awk '/MemAvailable/ { print int($2/1024) }' /proc/meminfo 2>/dev/null || awk '/MemFree/ { print int($2/1024) }' /proc/meminfo 2>/dev/null || echo 0)
+	echo "   Свободно RAM : ${mem_free} MB"
+	if [ "$mem_free" -lt 30 ] && [ "$mem_free" -gt 0 ]; then
+		echo "   $WARN_ICON Мало свободной памяти (<30MB)"
+		WARNINGS=$((WARNINGS + 1))
+	fi
+
+	echo ""
+	echo "${C_BOLD}2. Состояние AmneziaWG:${C_RESET}"
+	if lsmod 2>/dev/null | grep -q amneziawg; then
+		echo "   $PASS_ICON Модуль ядра kmod-amneziawg: загружен"
+	else
+		local kmod_file="/lib/modules/$(uname -r 2>/dev/null)/amneziawg.ko"
+		if [ -f "$kmod_file" ]; then
+			echo "   $WARN_ICON Модуль amneziawg.ko найден на диске, но не загружен в память (потребуется insmod или reboot)"
+			WARNINGS=$((WARNINGS + 1))
+		else
+			echo "   $WARN_ICON Модуль ядра amneziawg не установлен (будет скачан при установке)"
+		fi
+	fi
+
+	if [ -f /lib/netifd/proto/amneziawg.sh ]; then
+		echo "   $PASS_ICON Протокол netifd /lib/netifd/proto/amneziawg.sh: найден"
+	else
+		echo "   $WARN_ICON Протокол netifd amneziawg: не установлен (будет добавлен пакетом)"
+	fi
+
+	if command -v awg >/dev/null 2>&1; then
+		echo "   $PASS_ICON Утилита /usr/bin/awg: доступна"
+	else
+		echo "   $WARN_ICON Утилита awg: не найдена (будет установлена пакетом)"
+	fi
+
+	echo ""
+	echo "${C_BOLD}3. Доступность DNS-серверов:${C_RESET}"
+	local dns_ok=0
+	for d_entry in "77.88.8.8:Yandex DNS" "8.8.8.8:Google DNS" "1.1.1.1:Cloudflare DNS"; do
+		local d_ip=${d_entry%:*}
+		local d_name=${d_entry#*:}
+		local d_res
+		d_res=$(nslookup -timeout=2 www.google.com "$d_ip" 2>/dev/null | awk '/^Address:|^Address [0-9]+:/ { if ($NF !~ /:53$/) { print $NF; exit } }' || true)
+		if [ -z "$d_res" ]; then
+			d_res=$(nslookup www.google.com "$d_ip" 2>/dev/null | awk '/^Address:|^Address [0-9]+:/ { if ($NF !~ /:53$/) { print $NF; exit } }' || true)
+		fi
+		if [ -n "$d_res" ]; then
+			echo "   $PASS_ICON $d_name ($d_ip): OK (IP: $d_res)"
+			dns_ok=1
+		else
+			echo "   $FAIL_ICON $d_name ($d_ip): НЕТ ОТВЕТА (возможно, блокируется провайдером)"
+		fi
+	done
+
+	if [ "$dns_ok" -eq 0 ]; then
+		echo "   $FAIL_ICON Все внешние DNS-серверы заблокированы или недоступны!"
+		ERRORS=$((ERRORS + 1))
+	fi
+
+	echo ""
+	echo "${C_BOLD}4. Доступность Cloudflare WARP Registration API:${C_RESET}"
+	local cf_ok=0
+	local dummy_pub
+	if command -v awg >/dev/null 2>&1; then
+		dummy_pub=$(awg genkey 2>/dev/null | awg pubkey 2>/dev/null || echo "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=")
+	else
+		dummy_pub="bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+	fi
+	local tos
+	tos=$(date -u +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || echo "2026-09-14T00:00:00.000Z")
+	local body="{\"install_id\":\"\",\"tos\":\"$tos\",\"key\":\"$dummy_pub\",\"fcm_token\":\"\",\"type\":\"ios\",\"locale\":\"en_US\"}"
+
+	for cf_ip in "162.159.192.1:Anycast IP #1" "162.159.193.1:Anycast IP #2"; do
+		local r_ip=${cf_ip%:*}
+		local r_label=${cf_ip#*:}
+		local t_start t_end latency code
+		t_start=$(date +%s%3N 2>/dev/null || date +%s000)
+
+		code=$(curl -sS -k -o /dev/null -w '%{http_code}' --connect-timeout 4 --max-time 7 \
+			-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
+			--resolve api.cloudflareclient.com:443:"$r_ip" \
+			-d "$body" "https://api.cloudflareclient.com/v0i1909051800/reg" 2>/dev/null || true)
+		code=$(printf '%s' "$code" | tail -c 3)
+
+		t_end=$(date +%s%3N 2>/dev/null || date +%s000)
+		latency=$((t_end - t_start))
+		[ "$latency" -ge 0 ] 2>/dev/null || latency=0
+
+		case "$code" in
+			200|201)
+				echo "   $PASS_ICON $r_label ($r_ip): HTTP $code OK (${latency}ms) — Регистрация РАБОТАЕТ!"
+				cf_ok=1
+				;;
+			401|400)
+				echo "   $PASS_ICON $r_label ($r_ip): HTTP $code OK (${latency}ms) — API доступен и отвечает!"
+				cf_ok=1
+				;;
+			429)
+				echo "   $WARN_ICON $r_label ($r_ip): HTTP 429 Rate Limited (${latency}ms) — API доступен, но действует временный лимит (подождать 5-10 мин)"
+				WARNINGS=$((WARNINGS + 1))
+				cf_ok=1
+				;;
+			000|'')
+				echo "   $FAIL_ICON $r_label ($r_ip): ТАЙМАУТ / БЛОКИРОВКА (HTTP 000)"
+				;;
+			*)
+				echo "   $WARN_ICON $r_label ($r_ip): HTTP $code (${latency}ms)"
+				cf_ok=1
+				;;
+		esac
+	done
+
+	if [ "$cf_ok" -eq 0 ]; then
+		echo "   $FAIL_ICON Прямой доступ к API регистрации Cloudflare заблокирован провайдером!"
+		ERRORS=$((ERRORS + 1))
+	fi
+
+	echo ""
+	echo "${C_BOLD}5. Проверка портов туннелей WARP:${C_RESET}"
+	echo "   (WARP использует AmneziaWG поверх портов 500, 4500, 1701, 7559 и 2408)"
+	echo "   • Порт 500: IKE / IPsec NAT-T (наиболее надежный в РФ)"
+	echo "   • Порт 4500: IPsec NAT-T (наиболее надежный в РФ)"
+	echo "   • Порт 1701: L2TP standard"
+	echo "   • Порт 7559: Cloudflare high-port"
+	echo "   • Порт 2408: Стандартный порт Wireguard/WARP (часто заблокирован ТСПУ)"
+
+	echo ""
+	echo "${C_BOLD}6. Проверка прямого доступа к YouTube:${C_RESET}"
+	local yt_code
+	yt_code=$(curl -sS -k -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 5 \
+		https://www.youtube.com/generate_204 2>/dev/null || true)
+	yt_code=$(printf '%s' "$yt_code" | tail -c 3)
+
+	case "$yt_code" in
+		204|200)
+			echo "   $PASS_ICON Прямой доступ к YouTube: РАБОТАЕТ (HTTP $yt_code)"
+			;;
+		000|'')
+			echo "   $WARN_ICON Прямой доступ к YouTube: ЗАБЛОКИРОВАН ТСПУ / ТАЙМАУТ (HTTP 000)"
+			echo "              (Маршрутизация через WARP / Forkop вернет доступ)"
+			;;
+		*)
+			echo "   $WARN_ICON Прямой доступ к YouTube: HTTP $yt_code"
+			;;
+	esac
+
+	echo ""
+	echo "${C_BOLD}7. Статус Forkop:${C_RESET}"
+	if [ -f /etc/init.d/forkop ]; then
+		if /etc/init.d/forkop running 2>/dev/null; then
+			echo "   $PASS_ICON Forkop установлен и ЗАПУЩЕН"
+		else
+			echo "   $WARN_ICON Forkop установлен, но остановлен"
+		fi
+		local existing_secs
+		existing_secs=$(uci -q show forkop 2>/dev/null | grep '=section$' | cut -d. -f2 | cut -d= -f1 | tr '\n' ' ' || true)
+		if [ -n "$existing_secs" ]; then
+			echo "   Секции Forkop: $existing_secs"
+		fi
+	else
+		echo "   $WARN_ICON Forkop не установлен на роутере (установщик предложит поставить автоматически)"
+	fi
+
+	echo ""
+	echo "${C_BOLD}${C_CYAN}======================================================================${C_RESET}"
+	if [ "$ERRORS" -eq 0 ] && [ "$cf_ok" -eq 1 ]; then
+		echo "${C_BOLD}${C_GREEN} [✓] СИСТЕМА ПОЛНОСТЬЮ ГОТОВА К УСТАНОВКЕ WARP AUTO!                   ${C_RESET}"
+		echo "     API регистрации Cloudflare отвечает, Anycast-маршрутизация открыта."
+	elif [ "$cf_ok" -eq 0 ]; then
+		echo "${C_BOLD}${C_RED} [✗] ВНИМАНИЕ: Cloudflare API заблокирован провайдером.                ${C_RESET}"
+		echo "     Для генерации профилей потребуется рабочий обход или ручной импорт .conf"
+	else
+		echo "${C_BOLD}${C_YELLOW} [!] СИСТЕМА ГОТОВА, НО ИМЕЮТСЯ ПРЕДУПРЕЖДЕНИЯ (см. выше).           ${C_RESET}"
+	fi
+	echo "${C_BOLD}${C_CYAN}======================================================================${C_RESET}"
+}
+
 echo "${C_CYAN}======================================================================${C_RESET}"
 echo "${C_BOLD}${C_CYAN}          WARP Auto & AmneziaWG — Управление на OpenWrt               ${C_RESET}"
 echo "${C_CYAN}======================================================================${C_RESET}"
 sleep 0.3 2>/dev/null || true
 echo ""
 echo "${C_BOLD}Выберите действие:${C_RESET}"
-echo "  ${C_GREEN}[1] Установка${C_RESET}  — чистая установка AmneziaWG v3.1 + WARP Auto"
-echo "  ${C_CYAN}[2] Обновление${C_RESET} — обновление компонентов и LuCI UI (пул сохраняется)"
-echo "  ${C_RED}[3] Удаление${C_RESET}   — удаление AmneziaWG и WARP Auto"
+echo "  ${C_CYAN}[0] Диагностика${C_RESET} — экспресс-проверка системы, Cloudflare API и портов"
+echo "  ${C_GREEN}[1] Установка${C_RESET}   — чистая установка AmneziaWG v3.1 + WARP Auto"
+echo "  ${C_CYAN}[2] Обновление${C_RESET}  — обновление компонентов и LuCI UI (пул сохраняется)"
+echo "  ${C_RED}[3] Удаление${C_RESET}    — удаление AmneziaWG и WARP Auto"
 echo ""
-prompt_user choice "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}" "1"
+prompt_user choice "${C_BOLD}${C_YELLOW}Ваш выбор [0/1/2/3] (Enter = 1): ${C_RESET}" "1"
 
 ACTION="install"
 case "$choice" in
+	0) ACTION="diag" ;;
 	2) ACTION="update" ;;
 	3) ACTION="uninstall" ;;
 	*) ACTION="install" ;;
 esac
+
+if [ "$ACTION" = "diag" ]; then
+	run_diagnostics
+	echo ""
+	prompt_user continue_inst "${C_BOLD}${C_YELLOW}Продолжить установку AmneziaWG и WARP Auto прямо сейчас? [Y/n]: ${C_RESET}" "Y"
+	case "$continue_inst" in
+		[yY]|[yY][eE][sS]|[дД]|[дД][аА])
+			ACTION="install"
+			echo ""
+			;;
+		*)
+			echo "Выход."
+			exit 0
+			;;
+	esac
+fi
 
 echo ""
 
