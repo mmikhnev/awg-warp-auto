@@ -6,7 +6,7 @@
 set -u
 
 CONFIG=${1:-}
-TIMEOUT=${2:-10}
+TIMEOUT=${2:-4}
 LISTEN_PORT=${3:-51822}
 RESOLVERS=${4:-}
 DEV=awg_auto_probe
@@ -22,9 +22,9 @@ fail() {
 }
 
 cleanup() {
-	if ip -4 rule show priority "$PRIO" 2>/dev/null | grep -q "lookup $TABLE"; then
-		ip rule del priority "$PRIO" 2>/dev/null || true
-	fi
+	while ip -4 rule show priority "$PRIO" 2>/dev/null | grep -q "lookup $TABLE"; do
+		ip rule del priority "$PRIO" 2>/dev/null || break
+	done
 	ip route flush table "$TABLE" 2>/dev/null || true
 	ip link del dev "$DEV" 2>/dev/null || true
 	rm -f "$TMP"
@@ -101,7 +101,7 @@ done
 
 BEFORE=$(awg show "$DEV" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
 START=$(date +%s%3N 2>/dev/null || date +%s000)
-CODE=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "www.youtube.com:443:$YT_IP" \
+CODE=$(curl -4 --noproxy '*' --interface "$DEV" --resolve "www.youtube.com:443:$YT_IP" \
 	-L -sS -o /dev/null -w '%{http_code}' --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
 	https://www.youtube.com/generate_204 2>/dev/null)
 END=$(date +%s%3N 2>/dev/null || date +%s000)
@@ -117,7 +117,7 @@ LATENCY=$((END - START))
 
 # Fast download speed benchmark (25MB payload streamed directly to /dev/null, 0 disk/RAM space used)
 SPEED_MBPS=0
-SPEED_BPS=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "speed.cloudflare.com:443:$CF_SPEED_IP" \
+SPEED_BPS=$(curl -4 --noproxy '*' --interface "$DEV" --resolve "speed.cloudflare.com:443:$CF_SPEED_IP" \
 	-L -sS -o /dev/null -w '%{speed_download}' --connect-timeout 3 --max-time 12 \
 	"https://speed.cloudflare.com/__down?bytes=25000000" 2>/dev/null | cut -d. -f1)
 if [ -n "$SPEED_BPS" ] && [ "$SPEED_BPS" -gt 0 ] 2>/dev/null; then
