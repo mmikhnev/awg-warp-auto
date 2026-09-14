@@ -842,6 +842,15 @@ bootstrap_unlocked() {
 			test_candidates new
 		fi
 	fi
+
+	active=$(option active_id)
+	if [ -n "$active" ] && [ "$(entry "$active" status)" = ACTIVE ] && uci -q get "network.$iface" >/dev/null 2>&1; then
+		set_main last_bootstrap "$(now)"
+		set_bootstrap_state ready
+		log "bootstrap confirmed $iface active with profile $active"
+		return 0
+	fi
+
 	for id in $(sorted_ready_entries); do
 		if activate_one "$id" direct; then
 			set_main last_bootstrap "$(now)"

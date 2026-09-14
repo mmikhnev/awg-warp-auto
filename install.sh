@@ -57,8 +57,10 @@ echo ""
 printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}"
 if [ -t 0 ]; then
 	read -r choice || choice=""
+elif [ -e /dev/tty ] && [ -r /dev/tty ] && read -r choice </dev/tty 2>/dev/null; then
+	:
 else
-	read -r choice </dev/tty 2>/dev/null || choice=""
+	read -r choice || choice=""
 fi
 
 ACTION="install"
@@ -94,6 +96,9 @@ if [ "$ACTION" = "uninstall" ]; then
 	/etc/init.d/awg-warp-auto disable 2>/dev/null || true
 
 	echo "${C_CYAN}[2/5]${C_RESET} Удаление сетевых интерфейсов..."
+	warp_iface=$(uci -q get awg-warp-auto.main.interface 2>/dev/null || true)
+	[ -n "$warp_iface" ] || warp_iface="YTwarp"
+
 	if [ "$uninst_scope" = "2" ]; then
 		# Полное удаление всех amneziawg интерфейсов
 		for iface in $(uci -q show network | grep '\.proto=.amneziawg.' | cut -d. -f2 | cut -d= -f1); do
@@ -109,8 +114,8 @@ if [ "$ACTION" = "uninstall" ]; then
 		for peer in $(uci -q show network | grep '=amneziawg_' | cut -d. -f2 | cut -d= -f1); do
 			uci -q delete "network.$peer" || true
 		done
+	else
 		# Безопасное удаление только YTwarp
-		warp_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
 		ifdown "$warp_iface" 2>/dev/null || true
 		ip link del dev "$warp_iface" 2>/dev/null || true
 		uci -q delete "network.$warp_iface" || true
@@ -154,6 +159,7 @@ if [ "$ACTION" = "uninstall" ]; then
 		fi
 		rmmod amneziawg 2>/dev/null || true
 		rm -f /usr/bin/awg /lib/modules/*/amneziawg.ko /lib/netifd/proto/amneziawg.sh
+		rm -rf /www/luci-static/resources/protocol/amneziawg.js /www/luci-static/resources/icons/amneziawg.svg
 	else
 		if command -v apk >/dev/null 2>&1; then
 			apk del luci-proto-amneziawg awg-warp-auto-quic 2>/dev/null || true
@@ -164,7 +170,8 @@ if [ "$ACTION" = "uninstall" ]; then
 	rm -f /usr/bin/quic-i1
 	rm -rf /etc/config/awg-warp-auto /etc/init.d/awg-warp-auto /etc/awg-warp-auto /usr/libexec/awg-warp-auto
 	rm -f /usr/share/rpcd/ucode/luci.amneziawg /usr/share/rpcd/acl.d/luci-amneziawg.json /usr/share/luci/menu.d/luci-proto-amneziawg.json /usr/share/ucode/luci/controller/awgdownload.uc
-	rm -rf /www/luci-static/resources/view/amneziawg /www/luci-static/resources/protocol/amneziawg.js /www/luci-static/resources/icons/amneziawg.svg
+	rm -rf /www/luci-static/resources/view/amneziawg
+	[ "$uninst_scope" = "2" ] && rm -rf /www/luci-static/resources/protocol/amneziawg.js /www/luci-static/resources/icons/amneziawg.svg
 	rm -rf /tmp/luci-indexcache /tmp/awg-warp-auto* /tmp/quic*
 
 	echo "${C_CYAN}[4/5]${C_RESET} Перезапуск служб сети и веб-интерфейса..."

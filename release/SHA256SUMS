@@ -1,7 +1,3 @@
-16fc1f12e596677802aed691163ffbbeba715b1b013a1cd9eeb11e592f471cf0  install.sh
-729c8cdbc43bcc57d2ff205887de97541f346791bf6d3b742b972da22919fdae  release/awg-warp-auto-release.tar.gz
-6c57d2ccf0db4ad99cf4bb48ba9da2f95c891a0cf8099c899fe2432944fdd38f  dist/awg-warp-auto-installer.zip
-
-
-
-
+d4c1a535f764c529a15b0983db06ef5be493b478fcf3907e3620b1aefbee9484  install.sh
+7794852d0d8e1ea638a8bb856638154d3bb634c15db5f9cd043fb902f11fa77b  release/awg-warp-auto-release.tar.gz
+8c17746dc2b1c2ccab4fd7398050e026eb99e35530be3caabb81f55de3f05cb2  dist/awg-warp-auto-installer.zip
