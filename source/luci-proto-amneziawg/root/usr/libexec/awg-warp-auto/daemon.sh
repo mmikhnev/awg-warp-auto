@@ -715,14 +715,13 @@ native_replenish() {
 	[ "$ready" -eq 0 ] && safe_id "$(option active_id)" && emergency=1
 	last_attempt=$(number "$(option native_last_attempt)" 0)
 	if [ "$current" -lt "$next" ]; then
-		if [ "$force" = 1 ] && [ $((current - last_attempt)) -ge 30 ]; then
-			log info '[native] manual force replenishment requested (cooldown satisfied)'
-		else
-			[ "$emergency" = 1 ] && [ $((current - last_attempt)) -ge 60 ] || {
-				log debug '[native] registration budget/backoff active'
-				return 0
-			}
+		if [ "$force" = 1 ] || { [ "$ready" -eq 0 ] && ! safe_id "$(option active_id)"; }; then
+			log info '[native] initial bootstrap or manual replenishment allowed'
+		elif [ "$emergency" = 1 ] && [ $((current - last_attempt)) -ge 60 ]; then
 			log warning '[native] emergency replenishment after empty failover pool'
+		else
+			log debug '[native] registration budget/backoff active'
+			return 0
 		fi
 	fi
 	batch=$(bounded "$(option batch_size)" 2 1 10)

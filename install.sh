@@ -335,19 +335,32 @@ if lsmod | grep -q amneziawg; then
 			;;
 		*)
 			echo "${C_CYAN}---> Генерация первого рабочего WARP-профиля (Native Cloudflare API)...${C_RESET}"
-			if /usr/libexec/awg-warp-auto/daemon.sh bootstrap; then
-				if uci -q get network.YTwarp >/dev/null 2>&1; then
-					echo "${C_GREEN}[✓] Интерфейс YTwarp успешно создан и активирован!${C_RESET}"
-				else
-					echo "${C_GREEN}[✓] Профиль создан и сохранен в пуле.${C_RESET}"
+			bootstrap_ok=0
+			for attempt in 1 2 3; do
+				printf "${C_CYAN}[Попытка %d/3]${C_RESET} Регистрация и проверка AmneziaWG туннеля...\n" "$attempt"
+				if /usr/libexec/awg-warp-auto/daemon.sh bootstrap; then
+					if uci -q get network.YTwarp >/dev/null 2>&1; then
+						echo "${C_GREEN}[✓] Интерфейс YTwarp успешно создан, активирован и протестирован!${C_RESET}"
+						bootstrap_ok=1
+						break
+					fi
 				fi
-			else
 				b_state=$(uci -q get awg-warp-auto.main.bootstrap_state || true)
 				b_err=$(uci -q get awg-warp-auto.main.bootstrap_error || true)
-				echo "${C_YELLOW}[!] Первый профиль не удалось создать автоматически (${b_state:-failed}: ${b_err:-unknown}).${C_RESET}"
-				echo "    Подробный лог: logread -e awg-warp-auto"
-				echo "    Вы можете повторить попытку в LuCI (Services -> AmneziaWG -> Сгенерировать профиль)"
-				echo "    или командой в консоли: /usr/libexec/awg-warp-auto/daemon.sh bootstrap"
+				echo "${C_YELLOW}  -> Попытка $attempt не удалась (${b_state:-failed}: ${b_err:-timeout/no response}).${C_RESET}"
+				[ "$attempt" -lt 3 ] && sleep 3
+			done
+
+			if [ "$bootstrap_ok" -eq 1 ]; then
+				echo "${C_GREEN}[✓] Первый WARP-туннель полностью готов к работе.${C_RESET}"
+			else
+				echo ""
+				echo "${C_RED}[!] Не удалось автоматически создать первый профиль после 3 попыток.${C_RESET}"
+				echo "${C_YELLOW}Причины:${C_RESET} временный лимит Cloudflare API (429) или блокировка DNS."
+				echo "${C_BOLD}Что сделать дальше:${C_RESET}"
+				echo "  1. В веб-интерфейсе: ${C_CYAN}Services -> AmneziaWG${C_RESET} -> нажмите «Сгенерировать профиль»"
+				echo "  2. Или импортируйте свой .conf через вкладку «Импорт»"
+				echo "  3. Или выполните в консоли: ${C_CYAN}/usr/libexec/awg-warp-auto/daemon.sh bootstrap${C_RESET}"
 			fi
 			;;
 	esac
@@ -356,8 +369,17 @@ else
 fi
 
 echo ""
-echo "${C_GREEN}======================================================================${C_RESET}"
-echo "${C_BOLD}${C_GREEN} [✓] Установка WARP Auto завершена!                                   ${C_RESET}"
-echo "     Веб-интерфейс: Services -> AmneziaWG                             "
-echo "     Рекомендуется перезагрузить роутер: reboot                       "
-echo "${C_GREEN}======================================================================${C_RESET}"
+if [ "${bootstrap_ok:-1}" -eq 1 ]; then
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_GREEN} [✓] Установка WARP Auto успешно завершена!                           ${C_RESET}"
+	echo "     Интерфейс YTwarp готов для маршрутизации в Forkop.               "
+	echo "     Веб-интерфейс: Services -> AmneziaWG                             "
+	echo "     Рекомендуется перезагрузить роутер: reboot                       "
+	echo "${C_GREEN}======================================================================${C_RESET}"
+else
+	echo "${C_YELLOW}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_YELLOW} [!] Пакеты установлены, но профиль WARP еще не поднят.               ${C_RESET}"
+	echo "     Перед включением YouTube в Forkop создайте профиль в Services -> AmneziaWG"
+	echo "     Рекомендуется перезагрузить роутер: reboot                       "
+	echo "${C_YELLOW}======================================================================${C_RESET}"
+fi
