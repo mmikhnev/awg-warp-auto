@@ -1030,6 +1030,21 @@ const methods = {
 		}
 	},
 
+	getWarpAutoRankedSubnets: {
+		args: {},
+		call: function(req) {
+			let path = '/tmp/awg-warp-auto/ranked_subnets.json';
+			if (!stat(path)) {
+				command('/usr/libexec/awg-warp-auto/endpoint-rank.sh >/dev/null 2>&1');
+			}
+			let content = readfile(path);
+			if (!content) return { ok: false, subnets: [] };
+			let parsed = null;
+			try { parsed = json(content); } catch(e) {}
+			return { ok: true, subnets: parsed ?? [] };
+		}
+	},
+
 	validateAwgConfig: {
 		args: { config: 'config', filename: 'filename' },
 		call: function(req) {

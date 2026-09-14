@@ -170,23 +170,33 @@ if [ -n "$explicit_endpoint" ]; then
 		*) exit 1 ;;
 	esac
 else
-	# Fast Cloudflare Anycast subnets and unblocked ports for low latency and block evasion
+	# Dynamic Cloudflare Anycast subnets and ports adapted to local ISP and region
 	rnd_anycast_candidates() {
 		# 1. Registered endpoint from Cloudflare API
 		echo "${v4_ip}:${first_port}"
 
-		# 2. Verified core Cloudflare Anycast endpoints (fast subnets with 0% loss in RU)
-		for rip in 188.114.96.1 188.114.97.1 8.6.112.1 162.159.195.1; do
-			echo "${rip}:7559"
-			echo "${rip}:1070"
-			echo "${rip}:880"
-			echo "${rip}:854"
-			echo "${rip}:4500"
-			echo "${rip}:2408"
+		# 2. Dynamically ranked Anycast prefixes (cached for 24h)
+		local rank_cache="/tmp/awg-warp-auto/ranked_subnets.txt"
+		local prefixes=""
+		if [ -r "$rank_cache" ] && [ "$(find "$rank_cache" -mmin -1440 2>/dev/null)" ]; then
+			prefixes=$(awk '$3 == "ok" {printf "%s ", $2}' "$rank_cache" | sed 's/[[:space:]]*$//')
+		fi
+		if [ -z "$prefixes" ] && [ -x /usr/libexec/awg-warp-auto/endpoint-rank.sh ]; then
+			prefixes=$(/usr/libexec/awg-warp-auto/endpoint-rank.sh 2>/dev/null || true)
+		fi
+		[ -n "$prefixes" ] || prefixes="188.114.96. 188.114.97. 8.6.112. 162.159.195."
+
+		# Top Anycast gateways for live prefixes
+		for pfx in $prefixes; do
+			echo "${pfx}1:7559"
+			echo "${pfx}1:1070"
+			echo "${pfx}1:880"
+			echo "${pfx}1:854"
+			echo "${pfx}1:4500"
+			echo "${pfx}1:2408"
 		done
 
-		# 3. Random hosts across verified fast Cloudflare Anycast subnets
-		local prefixes="188.114.96. 188.114.97. 8.6.112. 162.159.195."
+		# Random hosts across the live prefixes
 		local fast_ports="7559 1070 880 854 4500 2408"
 		for pfx in $prefixes; do
 			rh=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1)

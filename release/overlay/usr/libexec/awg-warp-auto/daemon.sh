@@ -1036,8 +1036,9 @@ case "${1:-run}" in
 	failover) with_lock failover_and_replenish ;;
 	batch) with_lock generate_batch_unlocked "${2:-}" ;;
 	native_test) with_lock generate_batch_unlocked 1 ;;
+	rank_endpoints) /usr/libexec/awg-warp-auto/endpoint-rank.sh ;;
 	force_replenish) with_lock force_replenish_unlocked ;;
 	clean_replenish) with_lock clean_replenish_unlocked "${2:-}" ;;
 	delete) [ "$#" -eq 2 ] && with_lock delete_one "$2" || exit 2 ;;
-	*) echo "Usage: $0 {run|cycle|refresh|batch [N]|test_all|bootstrap|native_test|force_replenish|clean_replenish|delete ID|retest ID|activate ID|rollback|failover}" >&2; exit 2 ;;
+	*) echo "Usage: $0 {run|cycle|refresh|batch [N]|test_all|bootstrap|native_test|rank_endpoints|force_replenish|clean_replenish|delete ID|retest ID|activate ID|rollback|failover}" >&2; exit 2 ;;
 esac

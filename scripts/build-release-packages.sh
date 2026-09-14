@@ -104,6 +104,7 @@ chmod 644 "$LUCI_ROOT/www/luci-static/resources/view/amneziawg/status.js" \
 chmod 755 "$LUCI_ROOT/usr/libexec/awg-warp-auto/activate-worker.uc" \
           "$LUCI_ROOT/usr/libexec/awg-warp-auto/daemon.sh" \
           "$LUCI_ROOT/usr/libexec/awg-warp-auto/candidate-test.sh" \
+          "$LUCI_ROOT/usr/libexec/awg-warp-auto/endpoint-rank.sh" \
           "$LUCI_ROOT/usr/libexec/awg-warp-auto/health-check.sh" \
           "$LUCI_ROOT/usr/libexec/awg-warp-auto/native-provider.sh" \
           "$LUCI_ROOT/usr/libexec/awg-warp-auto/provider-fetch.sh" \
@@ -117,6 +118,7 @@ cat << "LISTEOF" > "$LUCI_ROOT/lib/apk/packages/luci-proto-amneziawg.list"
 /usr/libexec/awg-warp-auto/activate-worker.uc
 /usr/libexec/awg-warp-auto/candidate-test.sh
 /usr/libexec/awg-warp-auto/daemon.sh
+/usr/libexec/awg-warp-auto/endpoint-rank.sh
 /usr/libexec/awg-warp-auto/health-check.sh
 /usr/libexec/awg-warp-auto/native-provider.sh
 /usr/libexec/awg-warp-auto/provider-fetch.sh
@@ -153,6 +155,7 @@ cp -r "$SRC/htdocs/"* "$REPO_DIR/release/overlay/www/"
 chmod 755 "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/activate-worker.uc" \
           "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/daemon.sh" \
           "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/candidate-test.sh" \
+          "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/endpoint-rank.sh" \
           "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/health-check.sh" \
           "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/native-provider.sh" \
           "$REPO_DIR/release/overlay/usr/libexec/awg-warp-auto/provider-fetch.sh" \
