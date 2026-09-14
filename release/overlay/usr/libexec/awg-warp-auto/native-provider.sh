@@ -48,12 +48,12 @@ cf_curl() {
 	shift
 	rm -f "$tmp_hdr"
 	local code
-	code=$(curl -sS -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
+	code=$(curl -sS -k -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
 		-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
 		$resolve_flag "$@" 2>/dev/null || echo "000")
 	if [ "$code" = "000" ] && [ -z "$resolve_flag" ]; then
 		rm -f "$tmp_hdr"
-		code=$(curl -sS -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
+		code=$(curl -sS -k -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
 			-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
 			--resolve api.cloudflareclient.com:443:162.159.192.1 "$@" 2>/dev/null || echo "000")
 	fi

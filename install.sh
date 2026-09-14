@@ -335,9 +335,19 @@ if lsmod | grep -q amneziawg; then
 			;;
 		*)
 			echo "${C_CYAN}---> Генерация первого рабочего WARP-профиля (Native Cloudflare API)...${C_RESET}"
-			/usr/libexec/awg-warp-auto/daemon.sh bootstrap || true
-			if uci -q get network.YTwarp >/dev/null 2>&1; then
-				echo "${C_GREEN}[✓] Интерфейс YTwarp успешно создан и активирован!${C_RESET}"
+			if /usr/libexec/awg-warp-auto/daemon.sh bootstrap; then
+				if uci -q get network.YTwarp >/dev/null 2>&1; then
+					echo "${C_GREEN}[✓] Интерфейс YTwarp успешно создан и активирован!${C_RESET}"
+				else
+					echo "${C_GREEN}[✓] Профиль создан и сохранен в пуле.${C_RESET}"
+				fi
+			else
+				b_state=$(uci -q get awg-warp-auto.main.bootstrap_state || true)
+				b_err=$(uci -q get awg-warp-auto.main.bootstrap_error || true)
+				echo "${C_YELLOW}[!] Первый профиль не удалось создать автоматически (${b_state:-failed}: ${b_err:-unknown}).${C_RESET}"
+				echo "    Подробный лог: logread -e awg-warp-auto"
+				echo "    Вы можете повторить попытку в LuCI (Services -> AmneziaWG -> Сгенерировать профиль)"
+				echo "    или командой в консоли: /usr/libexec/awg-warp-auto/daemon.sh bootstrap"
 			fi
 			;;
 	esac
