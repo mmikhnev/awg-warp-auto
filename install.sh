@@ -259,7 +259,8 @@ fi
 
 echo "${C_CYAN}---> Распаковка пакета...${C_RESET}"
 rm -rf /tmp/awg-warp-auto-release
-tar -xzf "$ARCHIVE" -C /tmp
+mkdir -p /tmp/awg-warp-auto-release
+tar -xzf "$ARCHIVE" -C /tmp/awg-warp-auto-release
 rm -f "$ARCHIVE"
 
 WORK_DIR="/tmp/awg-warp-auto-release"
