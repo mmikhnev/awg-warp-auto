@@ -216,8 +216,11 @@ rpc_stage_file() {
 test_one() {
 	local id=$1 timeout resolvers iface result ok=false latency=0 speed=0 reason=''
 	safe_id "$id" || return 2
-	[ -r "$(entry_file "$id")" ] || return 2
-	timeout=$(number "$(option health_timeout)" 4)
+	if [ "$id" = "$(option active_id)" ]; then
+		timeout=$(number "$(option health_timeout)" 10)
+	else
+		timeout=3
+	fi
 	resolvers=$(option health_resolvers)
 	[ -n "$resolvers" ] || resolvers='77.88.8.8 77.88.8.1 8.8.8.8 1.1.1.1 9.9.9.9'
 

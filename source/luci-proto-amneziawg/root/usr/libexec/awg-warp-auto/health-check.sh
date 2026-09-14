@@ -31,8 +31,8 @@ done
 [ -n "$ADDR4" ] || { echo 'FAIL interface_address'; exit 1; }
 
 safe_cleanup_probe() {
-	while ip -4 rule show priority "$PROBE_PRIO" 2>/dev/null | grep -q "lookup $PROBE_TABLE"; do
-		ip rule del priority "$PROBE_PRIO" 2>/dev/null || break
+	while ip -4 rule show 2>/dev/null | grep -q "lookup $PROBE_TABLE"; do
+		ip rule del lookup "$PROBE_TABLE" 2>/dev/null || break
 	done
 	ip route flush table "$PROBE_TABLE" 2>/dev/null || true
 }
@@ -41,8 +41,8 @@ trap safe_cleanup_probe EXIT INT TERM
 # matching table 51823 is cleanly removed without touching other rules.
 safe_cleanup_probe
 ip route replace default dev "$IFACE" proto static scope link src "$ADDR4" table "$PROBE_TABLE" || { echo 'FAIL probe_route'; exit 1; }
-ip rule add from "$ADDR4/32" priority "$PROBE_PRIO" table "$PROBE_TABLE" || { echo 'FAIL probe_rule'; exit 1; }
 ip rule add oif "$IFACE" priority "$PROBE_PRIO" table "$PROBE_TABLE" 2>/dev/null || true
+ip rule add from "$ADDR4/32" priority "$PROBE_PRIO" table "$PROBE_TABLE" 2>/dev/null || true
 
 before=$(awg show "$IFACE" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
 [ -n "$before" ] || { echo 'FAIL transfer_before'; exit 1; }

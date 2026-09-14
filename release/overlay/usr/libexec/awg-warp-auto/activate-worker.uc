@@ -253,22 +253,31 @@ function activateAwg(iface) {
 	bus.call('network', 'reload', {});
 	command(`ifup ${shellquote(iface)} 2>/dev/null`);
 
+	let ok = false;
 	for (let attempt = 0; attempt < 15; attempt++) {
 		const status = bus.call(`network.interface.${iface}`, 'status', {});
-		if (status?.available == true && status?.up == true) return true;
+		if (status?.available == true && status?.up == true) { ok = true; break; }
 
 		bus.call(`network.interface.${iface}`, 'up', {});
 		command(`ifup ${shellquote(iface)} 2>/dev/null`);
 		command('sleep 1');
 	}
 
-	const awgCheck = trim(command(`awg show ${shellquote(iface)} 2>/dev/null`));
-	if (length(awgCheck)) return true;
+	if (!ok) {
+		const awgCheck = trim(command(`awg show ${shellquote(iface)} 2>/dev/null`));
+		const devStatus = trim(command(`ip link show dev ${shellquote(iface)} 2>/dev/null`));
+		if (!length(awgCheck) && (!length(devStatus) || index(devStatus, 'state UP') < 0)) return false;
+	}
 
-	const devStatus = trim(command(`ip link show dev ${shellquote(iface)} 2>/dev/null`));
-	if (length(devStatus) && index(devStatus, 'state UP') >= 0) return true;
+	// Trigger and wait for AmneziaWG handshake (up to 5 seconds)
+	for (let w = 0; w < 5; w++) {
+		const hs = int(trim(command(`awg show ${shellquote(iface)} latest-handshakes 2>/dev/null | awk '{print $2}'`)));
+		if (hs > 0 && (time() - hs) < 15) return true;
+		command(`ping -c 1 -W 1 -I ${shellquote(iface)} 1.1.1.1 >/dev/null 2>&1 || true`);
+		command('sleep 1');
+	}
 
-	return false;
+	return true;
 }
 
 function runtimeHealthCheck(mode, iface) {

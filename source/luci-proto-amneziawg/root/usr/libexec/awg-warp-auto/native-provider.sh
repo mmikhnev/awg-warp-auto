@@ -129,17 +129,18 @@ o4=$(printf '%s' "$v4_ip" | cut -d. -f4)
 [ "$o3" -ge 0 ] 2>/dev/null && [ "$o3" -le 255 ] 2>/dev/null || exit 1
 [ "$o4" -ge 0 ] 2>/dev/null && [ "$o4" -le 255 ] 2>/dev/null || exit 1
 
-# Prioritize ports: 500 -> 1701 -> 4500 -> arbitrary -> 2408, with deduplication
+# Prioritize unblocked ports: 7559/1070/880/854 -> 4500 -> 2408 -> arbitrary -> 500/1701
 sort_ports() {
 	printf '%s\n' "$1" | awk '
 	{
 		for (i = 1; i <= NF; i++) {
 			p = $i
 			if (p !~ /^[0-9]+$/ || p < 1 || p > 65535 || seen[p]++) continue
-			if (p == 500) prio = 10
-			else if (p == 1701) prio = 20
-			else if (p == 4500) prio = 30
-			else if (p == 2408) prio = 90
+			if (p == 7559 || p == 1070 || p == 880 || p == 854) prio = 10
+			else if (p == 4500) prio = 20
+			else if (p == 2408) prio = 30
+			else if (p == 500) prio = 70
+			else if (p == 1701) prio = 80
 			else prio = 40
 			print prio, i, p
 		}
@@ -169,22 +170,24 @@ if [ -n "$explicit_endpoint" ]; then
 		*) exit 1 ;;
 	esac
 else
-	# Fast Cloudflare Anycast subnets and ports for latency and block evasion
+	# Fast Cloudflare Anycast subnets and unblocked ports for low latency and block evasion
 	rnd_anycast_candidates() {
 		# 1. Registered endpoint from Cloudflare API
 		echo "${v4_ip}:${first_port}"
 
-		# 2. Verified core Cloudflare Anycast endpoints
-		for rip in 162.159.192.1 162.159.193.1 188.114.96.1 188.114.97.1; do
-			echo "${rip}:500"
-			echo "${rip}:4500"
-			echo "${rip}:1701"
+		# 2. Verified core Cloudflare Anycast endpoints (fast subnets with 0% loss in RU)
+		for rip in 188.114.96.1 188.114.97.1 8.6.112.1 162.159.195.1; do
 			echo "${rip}:7559"
+			echo "${rip}:1070"
+			echo "${rip}:880"
+			echo "${rip}:854"
+			echo "${rip}:4500"
+			echo "${rip}:2408"
 		done
 
 		# 3. Random hosts across verified fast Cloudflare Anycast subnets
-		local prefixes="162.159.192. 162.159.193. 162.159.195. 188.114.96. 188.114.97. 8.6.112."
-		local fast_ports="500 4500 1701 7559 1070 854 880 2408"
+		local prefixes="188.114.96. 188.114.97. 8.6.112. 162.159.195."
+		local fast_ports="7559 1070 880 854 4500 2408"
 		for pfx in $prefixes; do
 			rh=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1)
 			h_num=$(( (rh % 15) + 1 ))

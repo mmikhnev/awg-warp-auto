@@ -22,8 +22,8 @@ fail() {
 }
 
 cleanup() {
-	while ip -4 rule show priority "$PRIO" 2>/dev/null | grep -q "lookup $TABLE"; do
-		ip rule del priority "$PRIO" 2>/dev/null || break
+	while ip -4 rule show 2>/dev/null | grep -q "lookup $TABLE"; do
+		ip rule del lookup "$TABLE" 2>/dev/null || break
 	done
 	ip route flush table "$TABLE" 2>/dev/null || true
 	ip link del dev "$DEV" 2>/dev/null || true
@@ -77,7 +77,7 @@ ip route replace default dev "$DEV" proto static scope link src "$ADDR4" table "
 # Generated WARP profiles commonly share the same tunnel address as the active
 # profile. Route by the disposable output interface, never by that source IP,
 # otherwise a probe temporarily hijacks active awg_warp traffic.
-ip rule add oif "$DEV" priority "$PRIO" table "$TABLE" || fail rule
+ip rule add oif "$DEV" priority "$PRIO" table "$TABLE" 2>/dev/null || true
 
 # Use a real public address instead of a possible Fake-IP returned by the
 # local proxy DNS. A temporary block of one public resolver is not evidence
