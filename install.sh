@@ -10,7 +10,18 @@ set -eu
 REPO_OWNER="mmikhnev"
 REPO_NAME="awg-warp-auto"
 BRANCH="main"
-RELEASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz"
+
+# Получение актуального хэша коммита для обхода кеша GitHub Raw CDN
+COMMIT_REF="${BRANCH}"
+if command -v curl >/dev/null 2>&1; then
+	API_SHA=$(curl -fsSL --connect-timeout 4 "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits/${BRANCH}" 2>/dev/null | grep '"sha":' | head -n 1 | cut -d'"' -f4 || true)
+	[ -n "$API_SHA" ] && COMMIT_REF="$API_SHA"
+elif command -v wget >/dev/null 2>&1; then
+	API_SHA=$(wget -q -T 4 -O - "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits/${BRANCH}" 2>/dev/null | grep '"sha":' | head -n 1 | cut -d'"' -f4 || true)
+	[ -n "$API_SHA" ] && COMMIT_REF="$API_SHA"
+fi
+
+RELEASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${COMMIT_REF}/release/awg-warp-auto-release.tar.gz"
 
 # Цвета и оформление терминала
 C_RESET=$(printf '\033[0m')
@@ -222,7 +233,7 @@ fi
 # Проверка целостности SHA-256
 echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
 CACHE_BUST="?t=$(date +%s 2>/dev/null || echo 1)"
-CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS"
+CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${COMMIT_REF}/SHA256SUMS"
 MIRROR_CHECKSUM="https://gh-proxy.com/${CHECKSUM_URL}"
 TMP_CHECKSUMS="/tmp/SHA256SUMS.$$"
 EXPECTED_SHA=""
