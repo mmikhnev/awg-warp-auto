@@ -217,7 +217,7 @@ test_one() {
 	local id=$1 timeout resolvers iface result ok=false latency=0 speed=0 reason=''
 	safe_id "$id" || return 2
 	[ -r "$(entry_file "$id")" ] || return 2
-	timeout=$(number "$(option health_timeout)" 10)
+	timeout=$(number "$(option health_timeout)" 4)
 	resolvers=$(option health_resolvers)
 	[ -n "$resolvers" ] || resolvers='1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1'
 
@@ -260,7 +260,8 @@ test_one() {
 	set_entry "$id" last_error "${reason:-candidate_test_failed}"
 	set_entry "$id" failure_count "$(( $(number "$(entry "$id" failure_count)" 0) + 1 ))"
 	commit
-	log warning "candidate $id failed test"
+	local ep; ep=$(entry "$id" endpoint)
+	log warning "candidate $id (${ep:-unknown}) failed test: ${reason:-unknown}"
 	if [ "$(option retain_failed_profiles)" != 1 ] && [ "$id" != "$(option active_id)" ]; then
 		remove_entry "$id"
 		commit
@@ -363,11 +364,9 @@ prune_pool() {
 			remove_entry "$id"
 			continue
 		fi
-		# Auto mode must not silently keep legacy hardcoded Native candidates.
-		if [ "$mode" = auto ] && [ "$provider" = native ] && [ "$endpoint_source" != cloudflare_registration ] && [ "$id" != "$active" ]; then
-			remove_entry "$id"
-			continue
-		fi
+		# Never prune a candidate that is READY or ACTIVE
+		[ "$status" = READY ] && continue
+		[ "$status" = ACTIVE ] && continue
 		# Prune any non-active candidates with Fake-IP or unresolvable hostname endpoints
 		ep_val=$(entry "$id" endpoint)
 		case "$ep_val" in
@@ -553,6 +552,7 @@ generate_one_native() {
 				set_entry "$id" endpoint_source cloudflare_registration
 				set_entry "$id" endpoint "$endpoint"
 				set_entry "$id" status NEW
+				commit
 				[ -n "${gen_total:-}" ] && set_batch_state running "${provider:-native}" "${count:-1}" "${gen_total:-0}" "${gen_ready:-0}" "${gen_failed:-0}" "Profile $(( ${gen_total:-0} + 1 )) of ${count:-1}: testing endpoint $endpoint…"
 				if test_one "$id"; then
 					auto_ok=1
@@ -893,6 +893,7 @@ activate_one() {
 	file="$GENERATED/activate.$$.json"
 	printf '%s' "$reply" > "$file"
 	ok=$(read_json "$file" '@.ok')
+	err=$(read_json "$file" '@.error')
 	rm -f "$file"
 	if [ "$ok" = true ]; then
 		prune_pool
@@ -900,7 +901,7 @@ activate_one() {
 		return 0
 	fi
 	prune_pool
-	log warning "candidate $id activation rolled back by core health gate"
+	log warning "candidate $id activation rolled back: ${err:-core health gate}"
 	return 1
 }
 

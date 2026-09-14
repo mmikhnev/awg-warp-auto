@@ -22,21 +22,25 @@ case "$MODE" in strict|direct) ;; *) echo 'FAIL mode'; exit 1 ;; esac
 # for the direct tunnel proof below, just like candidate-test.sh does.
 PROBE_TABLE=51823
 PROBE_PRIO=31823
-ADDR4=$(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+ADDR4=''
+for _i in 1 2 3 4 5; do
+	ADDR4=$(ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk 'NR == 1 { split($4, a, "/"); print a[1] }')
+	[ -n "$ADDR4" ] && break
+	sleep 1
+done
 [ -n "$ADDR4" ] || { echo 'FAIL interface_address'; exit 1; }
 
 safe_cleanup_probe() {
-	# Only delete rule if it specifically matches priority 31823 AND table 51823
-	if ip -4 rule show priority "$PROBE_PRIO" 2>/dev/null | grep -q "lookup $PROBE_TABLE"; then
-		ip rule del priority "$PROBE_PRIO" 2>/dev/null || true
-	fi
+	while ip -4 rule show priority "$PROBE_PRIO" 2>/dev/null | grep -q "lookup $PROBE_TABLE"; do
+		ip rule del priority "$PROBE_PRIO" 2>/dev/null || break
+	done
 	ip route flush table "$PROBE_TABLE" 2>/dev/null || true
 }
 trap safe_cleanup_probe EXIT INT TERM
 # Reclaim dedicated priority/table before testing so any interrupted/stale probe rule
 # matching table 51823 is cleanly removed without touching other rules.
 safe_cleanup_probe
-ip route replace default dev "$IFACE" table "$PROBE_TABLE" || { echo 'FAIL probe_route'; exit 1; }
+ip route replace default dev "$IFACE" proto static scope link src "$ADDR4" table "$PROBE_TABLE" || { echo 'FAIL probe_route'; exit 1; }
 ip rule add from "$ADDR4/32" priority "$PROBE_PRIO" table "$PROBE_TABLE" || { echo 'FAIL probe_rule'; exit 1; }
 
 before=$(awg show "$IFACE" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
@@ -64,7 +68,7 @@ fi
 # the interface-bound proof. This does not change DNS settings or routing.
 yt_ip=''
 cf_speed_ip=''
-resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
+resolvers_list=${RESOLVERS:-"77.88.8.8 77.88.8.1 8.8.8.8 1.1.1.1 9.9.9.9"}
 for dns in $resolvers_list; do
 	[ -z "$yt_ip" ] && yt_ip=$(nslookup www.youtube.com "$dns" 2>/dev/null | awk '
 		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }

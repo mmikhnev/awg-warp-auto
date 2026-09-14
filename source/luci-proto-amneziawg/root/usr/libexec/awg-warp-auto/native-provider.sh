@@ -174,19 +174,17 @@ else
 		# 1. Registered endpoint from Cloudflare API
 		echo "${v4_ip}:${first_port}"
 
-		# 2. Regional Anycast IPs dynamically resolved from client's ISP
-		local resolved_ips
-		resolved_ips=$(nslookup engage.cloudflareclient.com 2>/dev/null | awk '/^Address:|^Address [0-9]+:/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $i !~ /^198\.18\./ && $i !~ /^198\.19\./) print $i }' | head -n 4 || true)
-		for rip in $resolved_ips; do
-			echo "${rip}:${first_port}"
+		# 2. Verified core Cloudflare Anycast endpoints
+		for rip in 162.159.192.1 162.159.193.1 188.114.96.1 188.114.97.1; do
 			echo "${rip}:500"
-			echo "${rip}:1701"
 			echo "${rip}:4500"
+			echo "${rip}:1701"
+			echo "${rip}:7559"
 		done
 
 		# 3. Random hosts across verified fast Cloudflare Anycast subnets
-		local prefixes="188.114.97. 162.159.195. 8.6.112. 162.159.192. 188.114.96. 162.159.193."
-		local fast_ports="1070 2408 1701 7559 500 854 880 4500"
+		local prefixes="162.159.192. 162.159.193. 162.159.195. 188.114.96. 188.114.97. 8.6.112."
+		local fast_ports="500 4500 1701 7559 1070 854 880 2408"
 		for pfx in $prefixes; do
 			rh=$(hexdump -n 2 -e '/2 "%u"' /dev/urandom 2>/dev/null || echo 1)
 			h_num=$(( (rh % 15) + 1 ))
@@ -195,7 +193,7 @@ else
 			done
 		done
 	}
-	candidates=$(rnd_anycast_candidates | awk 'BEGIN{srand()} {print rand(), $0}' | sort -k1,1n | cut -d' ' -f2 | head -n 15 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+	candidates=$(rnd_anycast_candidates | awk 'BEGIN{srand()} {print rand(), $0}' | sort -k1,1n | cut -d' ' -f2 | head -n 6 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 	endpoint=$(printf '%s\n' "$candidates" | awk '{print $1}')
 fi
 

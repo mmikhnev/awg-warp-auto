@@ -73,7 +73,7 @@ awg setconf "$DEV" "$TMP" 2>/dev/null || fail setconf
 awg set "$DEV" fwmark "$PROBE_MARK" listen-port "$LISTEN_PORT" 2>/dev/null || fail fwmark
 ip addr add "$ADDR4/32" dev "$DEV" 2>/dev/null || fail address
 ip link set dev "$DEV" up || fail link_up
-ip route replace default dev "$DEV" table "$TABLE" || fail route
+ip route replace default dev "$DEV" proto static scope link src "$ADDR4" table "$TABLE" || fail route
 # Generated WARP profiles commonly share the same tunnel address as the active
 # profile. Route by the disposable output interface, never by that source IP,
 # otherwise a probe temporarily hijacks active awg_warp traffic.
@@ -84,7 +84,7 @@ ip rule add oif "$DEV" priority "$PRIO" table "$TABLE" || fail rule
 # that an otherwise healthy candidate is broken.
 YT_IP=''
 CF_SPEED_IP=''
-resolvers_list=${RESOLVERS:-"1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1"}
+resolvers_list=${RESOLVERS:-"77.88.8.8 77.88.8.1 8.8.8.8 1.1.1.1 9.9.9.9"}
 for DNS in $resolvers_list; do
 	[ -z "$YT_IP" ] && YT_IP=$(nslookup www.youtube.com "$DNS" 2>/dev/null | awk '
 		/^Address [0-9]+: / { ip = $4; if (ip ~ /^[0-9.]+$/) { print ip; exit } }
@@ -101,7 +101,7 @@ done
 
 BEFORE=$(awg show "$DEV" transfer 2>/dev/null | awk 'NR == 1 { print $2 ":" $3 }')
 START=$(date +%s%3N 2>/dev/null || date +%s000)
-CODE=$(curl -4 --noproxy '*' --interface "$DEV" --resolve "www.youtube.com:443:$YT_IP" \
+CODE=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "www.youtube.com:443:$YT_IP" \
 	-L -sS -o /dev/null -w '%{http_code}' --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
 	https://www.youtube.com/generate_204 2>/dev/null)
 END=$(date +%s%3N 2>/dev/null || date +%s000)
@@ -117,7 +117,7 @@ LATENCY=$((END - START))
 
 # Fast download speed benchmark (25MB payload streamed directly to /dev/null, 0 disk/RAM space used)
 SPEED_MBPS=0
-SPEED_BPS=$(curl -4 --noproxy '*' --interface "$DEV" --resolve "speed.cloudflare.com:443:$CF_SPEED_IP" \
+SPEED_BPS=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "speed.cloudflare.com:443:$CF_SPEED_IP" \
 	-L -sS -o /dev/null -w '%{speed_download}' --connect-timeout 3 --max-time 12 \
 	"https://speed.cloudflare.com/__down?bytes=25000000" 2>/dev/null | cut -d. -f1)
 if [ -n "$SPEED_BPS" ] && [ "$SPEED_BPS" -gt 0 ] 2>/dev/null; then

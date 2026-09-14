@@ -276,7 +276,7 @@ function runtimeHealthCheck(mode, iface) {
 	let timeout = 10;
 	let resources = [ 'youtube.com' ];
 	let attempts = 2;
-	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	let resolvers = '77.88.8.8 77.88.8.1 8.8.8.8 1.1.1.1 9.9.9.9';
 	mode = autoHealthMode(mode, 'strict');
 	const uci = cursor();
 	if (uci.load(AUTO_CONFIG)) {
@@ -291,7 +291,7 @@ function runtimeHealthCheck(mode, iface) {
 	}
 	let result = "no health-check result";
 	for (let attempt = 0; attempt < attempts; attempt++) {
-		result = command(`sleep 2; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ","))} ${mode} ${shellquote(resolvers)} 2>/dev/null`);
+		result = command(`sleep 1; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ","))} ${mode} ${shellquote(resolvers)} 2>&1`);
 		const parts = split(trim(result), ' ');
 		if (parts[0] == 'OK' && parts[1])
 			return { ok: true, detail: result };
@@ -490,7 +490,11 @@ activateAwg(iface);
 const autoUci = cursor();
 autoUci.load(AUTO_CONFIG);
 const prev_fails = autoNumber(autoUci.get(AUTO_CONFIG, id, "failure_count"), 0);
-autoUci.set(AUTO_CONFIG, id, "status", "FAILED");
+if (prev_fails >= 2) {
+	autoUci.set(AUTO_CONFIG, id, "status", "FAILED");
+} else {
+	autoUci.set(AUTO_CONFIG, id, "status", "READY");
+}
 autoUci.set(AUTO_CONFIG, id, "last_error", "activation_health_failed");
 autoUci.set(AUTO_CONFIG, id, "failure_count", sprintf("%d", prev_fails + 1));
 autoUci.commit(AUTO_CONFIG);
