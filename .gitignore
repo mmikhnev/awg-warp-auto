@@ -1,3 +1,6 @@
 dist/
 experimental/
 build_awg_v3/
+tests/
+source/luci-proto-amneziawg/tests/
+source/awg-warp-auto-quic/tests/
