@@ -14,9 +14,9 @@
 Подключитесь к роутеру по SSH и выполните:
 
 ```sh
-sh -c "$(wget --no-check-certificate -qO- https://gh-proxy.com/https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh 2>/dev/null || wget --no-check-certificate -qO- https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh 2>/dev/null || curl -kfsSL https://gh-proxy.com/https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"
+sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)
 ```
-*(Команда автоматически использует защищенное от блокировок зеркало, работает на стандартном BusyBox `ash` без установленных корневых сертификатов и не ломается при перехвате Fake-IP).*
+*(Для стандартного busybox `ash` на чистом роутере также подходит: `sh -c "$(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"`)*.
 
 ---
 
