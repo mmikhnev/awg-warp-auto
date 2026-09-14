@@ -156,21 +156,16 @@ download_with_fallback() {
 	shift
 	rm -f "$target"
 	for u in "$@"; do
-		# 1. curl (trusted then insecure)
+		echo "${C_DIM}   -> Попытка источника: $u${C_RESET}"
+		# 1. curl with -k and strict 15s timeout
 		if command -v curl >/dev/null 2>&1; then
-			if curl -fsSL --connect-timeout 8 --max-time 120 "$u" -o "$target" 2>/dev/null && [ -s "$target" ]; then
-				return 0
-			fi
-			if curl -k -fsSL --connect-timeout 8 --max-time 120 "$u" -o "$target" 2>/dev/null && [ -s "$target" ]; then
+			if curl -k -fsSL --connect-timeout 6 --max-time 20 "$u" -o "$target" 2>/dev/null && [ -s "$target" ]; then
 				return 0
 			fi
 		fi
-		# 2. wget (no-check-certificate)
+		# 2. wget with --no-check-certificate
 		if command -v wget >/dev/null 2>&1; then
 			if wget -q --no-check-certificate -T 15 -O "$target" "$u" 2>/dev/null && [ -s "$target" ]; then
-				return 0
-			fi
-			if wget -q -T 15 -O "$target" "$u" 2>/dev/null && [ -s "$target" ]; then
 				return 0
 			fi
 		fi
@@ -184,6 +179,14 @@ download_with_fallback() {
 	return 1
 }
 
+# Временно отключаем Forkop / Sing-box, если они перехватывают трафик на несуществующий туннель
+FORKOP_WAS_RUNNING=0
+if [ -f /etc/init.d/forkop ] && /etc/init.d/forkop status 2>/dev/null | grep -qi "running"; then
+	echo "${C_CYAN}---> Приостановка Forkop для исключения перехвата DNS (Fake-IP)...${C_RESET}"
+	/etc/init.d/forkop stop 2>/dev/null || true
+	FORKOP_WAS_RUNNING=1
+fi
+
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 if [ -f "$SCRIPT_DIR/dist/awg-warp-auto-release.tar.gz" ]; then
 	echo "${C_CYAN}---> Используется локальный релизный архив из dist/...${C_RESET}"
@@ -194,21 +197,20 @@ elif [ -f "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" ]; then
 elif [ -s "$ARCHIVE" ] && [ "$(wc -c < "$ARCHIVE" 2>/dev/null || echo 0)" -gt 10000 ]; then
 	echo "${C_CYAN}---> Обнаружен предварительно загруженный архив $ARCHIVE...${C_RESET}"
 else
-	echo "${C_CYAN}---> Скачивание релизного пакета (GitHub + зеркала)...${C_RESET}"
+	echo "${C_CYAN}---> Скачивание релизного пакета...${C_RESET}"
 	ARCHIVE_URLS="
-https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
 https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
+https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/release/awg-warp-auto-release.tar.gz
+https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
 https://ghproxy.net/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz
 "
 	# shellcheck disable=SC2086
 	if ! download_with_fallback "$ARCHIVE" $ARCHIVE_URLS; then
-		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив с GitHub и зеркал!${C_RESET}" >&2
+		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив!${C_RESET}" >&2
 		echo "" >&2
 		echo "${C_YELLOW}Возможные причины:${C_RESET}" >&2
-		echo " 1. ${C_BOLD}Перехват трафика DNS/Fake-IP:${C_RESET} если на роутере запущен Forkop или Sing-box" >&2
-		echo "    без работающего туннеля, роутер перенаправляет запросы в себя (198.18.0.x)." >&2
-		echo "    Временно остановите службу перед установкой:" >&2
-		echo "      ${C_CYAN}/etc/init.d/forkop stop${C_RESET}  (или ${C_CYAN}/etc/init.d/sing-box stop${C_RESET})" >&2
+		echo " 1. ${C_BOLD}Перехват трафика DNS/Fake-IP:${C_RESET} если на роутере запущен Forkop или Sing-box," >&2
+		echo "    выполните: ${C_CYAN}/etc/init.d/forkop stop${C_RESET}" >&2
 		echo " 2. ${C_BOLD}Офлайн-установка:${C_RESET} скопируйте awg-warp-auto-release.tar.gz в /tmp роутера" >&2
 		echo "    и запустите инсталлер повторно." >&2
 		exit 1
@@ -218,8 +220,9 @@ fi
 # Проверка целостности SHA-256
 echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
 CHECKSUM_URLS="
-https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
 https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
+https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/SHA256SUMS
+https://gh-proxy.com/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
 https://ghproxy.net/https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS
 "
 TMP_CHECKSUMS="/tmp/SHA256SUMS.$$"
@@ -382,4 +385,9 @@ else
 	echo "     Перед включением YouTube в Forkop создайте профиль в Services -> AmneziaWG"
 	echo "     Рекомендуется перезагрузить роутер: reboot                       "
 	echo "${C_YELLOW}======================================================================${C_RESET}"
+fi
+
+if [ "${FORKOP_WAS_RUNNING:-0}" = "1" ]; then
+	echo "${C_CYAN}---> Возобновление работы Forkop...${C_RESET}"
+	/etc/init.d/forkop start 2>/dev/null || true
 fi
