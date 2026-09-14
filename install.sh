@@ -39,9 +39,9 @@ echo "${C_CYAN}=================================================================
 sleep 0.3 2>/dev/null || true
 echo ""
 echo "${C_BOLD}Выберите действие:${C_RESET}"
-echo "  ${C_GREEN}[1] Установка${C_RESET}  — полная установка AmneziaWG v3.1 + WARP Auto"
+echo "  ${C_GREEN}[1] Установка${C_RESET}  — чистая установка AmneziaWG v3.1 + WARP Auto"
 echo "  ${C_CYAN}[2] Обновление${C_RESET} — обновление компонентов и LuCI UI (пул сохраняется)"
-echo "  ${C_RED}[3] Удаление${C_RESET}   — полное удаление AmneziaWG и WARP Auto (Forkop не трогаем)"
+echo "  ${C_RED}[3] Удаление${C_RESET}   — удаление AmneziaWG и WARP Auto"
 echo ""
 printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}"
 if [ -t 0 ]; then
@@ -148,7 +148,7 @@ if [ "$ACTION" = "uninstall" ]; then
 	echo ""
 	echo "${C_GREEN}======================================================================${C_RESET}"
 	echo "${C_BOLD}${C_GREEN} [✓] Удаление успешно завершено!                                      ${C_RESET}"
-	echo "     Forkop сохранен и не затронут.                                   "
+	echo "     Сторонние сетевые интерфейсы и службы сохранены.                 "
 	echo "${C_GREEN}======================================================================${C_RESET}"
 	exit 0
 fi
