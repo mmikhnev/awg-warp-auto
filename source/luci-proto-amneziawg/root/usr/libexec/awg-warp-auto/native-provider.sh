@@ -42,13 +42,17 @@ cf_curl() {
 	local code
 	code=$(curl -sS -k -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
 		-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
-		--resolve api.cloudflareclient.com:443:162.159.192.1 "$@" 2>/dev/null || echo "000")
-	if [ "$code" = "000" ]; then
-		rm -f "$tmp_hdr"
-		code=$(curl -sS -k -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
-			-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
-			--resolve api.cloudflareclient.com:443:162.159.193.1 "$@" 2>/dev/null || echo "000")
-	fi
+		--resolve api.cloudflareclient.com:443:162.159.192.1 "$@" 2>/dev/null || true)
+	code=$(printf '%s' "$code" | tail -c 3)
+	case "$code" in
+		000|'')
+			rm -f "$tmp_hdr"
+			code=$(curl -sS -k -D "$tmp_hdr" -o "$out_file" -w '%{http_code}' --connect-timeout 8 --max-time 15 \
+				-A 'okhttp/3.12.1' -H 'Content-Type: application/json' \
+				--resolve api.cloudflareclient.com:443:162.159.193.1 "$@" 2>/dev/null || true)
+			code=$(printf '%s' "$code" | tail -c 3)
+			;;
+	esac
 	printf '%s' "$code"
 }
 
