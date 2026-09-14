@@ -28,6 +28,9 @@ log() {
 	threshold=$(log_rank "$(log_level)")
 	[ "$(log_rank "$level")" -ge "$threshold" ] || return 0
 	logger -p "user.$level" -t "$TAG" "$*"
+	if [ -t 1 ] || [ -t 2 ]; then
+		printf '[%s] %s\n' "$level" "$*" >&2
+	fi
 }
 now() { date +%s; }
 

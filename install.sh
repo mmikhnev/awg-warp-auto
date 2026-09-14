@@ -44,6 +44,24 @@ if [ ! -f /etc/openwrt_release ]; then
 	exit 1
 fi
 
+prompt_user() {
+	local var_name=$1
+	local prompt_text=$2
+	local default_val=${3:-}
+	local input=""
+
+	if (exec 3</dev/tty) 2>/dev/null; then
+		exec 3<&-
+		printf "%b" "$prompt_text" >/dev/tty
+		read -r input </dev/tty || input="$default_val"
+	else
+		printf "%b" "$prompt_text"
+		read -r input || input="$default_val"
+	fi
+	[ -n "$input" ] || input="$default_val"
+	eval "$var_name=\$input"
+}
+
 echo "${C_CYAN}======================================================================${C_RESET}"
 echo "${C_BOLD}${C_CYAN}          WARP Auto & AmneziaWG — Управление на OpenWrt               ${C_RESET}"
 echo "${C_CYAN}======================================================================${C_RESET}"
@@ -54,14 +72,7 @@ echo "  ${C_GREEN}[1] Установка${C_RESET}  — чистая устан�
 echo "  ${C_CYAN}[2] Обновление${C_RESET} — обновление компонентов и LuCI UI (пул сохраняется)"
 echo "  ${C_RED}[3] Удаление${C_RESET}   — удаление AmneziaWG и WARP Auto"
 echo ""
-printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}"
-if [ -t 0 ]; then
-	read -r choice || choice=""
-elif [ -e /dev/tty ] && [ -r /dev/tty ] && read -r choice </dev/tty 2>/dev/null; then
-	:
-else
-	read -r choice || choice=""
-fi
+prompt_user choice "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}" "1"
 
 ACTION="install"
 case "$choice" in
@@ -87,8 +98,7 @@ if [ "$ACTION" = "uninstall" ]; then
 	echo "${C_BOLD}Выберите область удаления:${C_RESET}"
 	echo "  ${C_CYAN}[1] Удалить только WARP Auto (YTwarp)${C_RESET} — другие AmneziaWG интерфейсы сохранятся"
 	echo "  ${C_RED}[2] Полная зачистка всех интерфейсов AmneziaWG и пакетов ядра${C_RESET}"
-	printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2] (Enter = 1): ${C_RESET}"
-	read -r uninst_scope || uninst_scope=""
+	prompt_user uninst_scope "${C_BOLD}${C_YELLOW}Ваш выбор [1/2] (Enter = 1): ${C_RESET}" "1"
 
 	echo ""
 	echo "${C_CYAN}[1/5]${C_RESET} Остановка сервиса awg-warp-auto..."
@@ -331,14 +341,15 @@ echo "${C_CYAN}=== Начальная настройка WARP ===${C_RESET}"
 warp_target_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
 bootstrap_ok=0
 if lsmod | grep -q amneziawg; then
-	printf "${C_BOLD}${C_YELLOW}Сгенерировать и активировать первый WARP-профиль прямо сейчас? [Y/n]: ${C_RESET}"
-	read -r gen_first || gen_first=""
+	prompt_user gen_first "${C_BOLD}${C_YELLOW}Сгенерировать и активировать первый WARP-профиль прямо сейчас? [Y/n]: ${C_RESET}" "Y"
 	case "$gen_first" in
 		[nN]|[nN][oO]|[нН]|[нН][еЕ][тТ])
 			echo "Вы можете сгенерировать профиль позже через LuCI: Services -> AmneziaWG"
 			;;
 		*)
 			echo "${C_CYAN}---> Генерация первого рабочего WARP-профиля (Native Cloudflare API)...${C_RESET}"
+			/etc/init.d/awg-warp-auto stop 2>/dev/null || true
+			rm -rf /var/run/awg-warp-auto.lock
 			for attempt in 1 2 3; do
 				printf "${C_CYAN}[Попытка %d/3]${C_RESET} Регистрация и проверка AmneziaWG туннеля...\n" "$attempt"
 				if /usr/libexec/awg-warp-auto/daemon.sh bootstrap; then
@@ -378,8 +389,7 @@ echo ""
 echo "${C_CYAN}=== Интеграция с Forkop (sing-box) ===${C_RESET}"
 if [ -f /etc/config/forkop ] && [ -f /etc/init.d/forkop ]; then
 	echo "${C_GREEN}[✓] Forkop обнаружен на роутере.${C_RESET}"
-	printf "${C_BOLD}${C_YELLOW}Создать секцию маршрутизации YouTube в Forkop для '$warp_target_iface'? [Y/n]: ${C_RESET}"
-	read -r setup_forkop || setup_forkop=""
+	prompt_user setup_forkop "${C_BOLD}${C_YELLOW}Создать секцию маршрутизации YouTube в Forkop для '$warp_target_iface'? [Y/n]: ${C_RESET}" "Y"
 	case "$setup_forkop" in
 		[nN]|[nN][oO]|[нН]|[нН][еЕ][тТ])
 			echo "Пропуск настройки Forkop."
@@ -502,8 +512,7 @@ else
 	echo "${C_YELLOW}[!] Forkop не обнаружен на роутере.${C_RESET}"
 	echo "    Forkop позволяет направлять трафик отдельных сервисов (YouTube, Discord и др.)"
 	echo "    в туннель WARP, оставляя весь остальной трафик прямым."
-	printf "${C_BOLD}${C_YELLOW}Хотите установить Forkop прямо сейчас? [y/N]: ${C_RESET}"
-	read -r install_forkop || install_forkop=""
+	prompt_user install_forkop "${C_BOLD}${C_YELLOW}Хотите установить Forkop прямо сейчас? [y/N]: ${C_RESET}" "N"
 	case "$install_forkop" in
 		[yY]|[yY][eE][sS]|[дД]|[дД][аА])
 			echo "${C_CYAN}---> Запуск официальной установки Forkop...${C_RESET}"
@@ -513,6 +522,11 @@ else
 			echo "Пропуск установки Forkop."
 			;;
 	esac
+fi
+
+# Запуск службы в фоне, если включена
+if [ "$(uci -q get awg-warp-auto.main.enabled)" = "1" ]; then
+	/etc/init.d/awg-warp-auto start 2>/dev/null || true
 fi
 
 echo ""

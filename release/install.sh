@@ -362,9 +362,10 @@ rm -f /tmp/luci-indexcache 2>/dev/null || true
 echo "Reloading rpcd service..."
 /etc/init.d/rpcd restart
 
-echo "Enabling and starting awg-warp-auto service..."
+echo "Enabling awg-warp-auto service..."
 /etc/init.d/awg-warp-auto enable 2>/dev/null || true
-/etc/init.d/awg-warp-auto restart 2>/dev/null || true
+/etc/init.d/awg-warp-auto stop 2>/dev/null || true
+rm -rf /var/run/awg-warp-auto.lock
 
 echo "${C_CYAN}=== 7. Post-Installation Verification ===${C_RESET}"
 FAILURES=0
@@ -388,6 +389,11 @@ else
 	echo "  ${C_RED}[✗]${C_RESET} kmod-amneziawg missing"
 	FAILURES=$((FAILURES + 1))
 fi
+
+for i in 1 2 3 4 5; do
+	ubus list 2>/dev/null | grep -q 'luci.amneziawg' && break
+	sleep 1
+done
 
 if ubus call luci.amneziawg getWarpAutoStatus >/dev/null 2>&1; then
 	echo "  ${C_GREEN}[✓]${C_RESET} rpcd luci.amneziawg ubus service responding"
