@@ -14,9 +14,9 @@
 Подключитесь к роутеру по SSH и выполните:
 
 ```sh
-sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)
+sh <(wget -qO- https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)
 ```
-*(Для стандартного busybox `ash` на чистом роутере также подходит: `sh -c "$(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"`)*.
+*(Для стандартного busybox `ash` на чистом роутере также подходит: `sh -c "$(wget -qO- https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"`)*.
 
 ---
 
@@ -127,7 +127,7 @@ sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/ins
 | Компонент / Ссылка | SHA-256 контрольная сумма | Отчет VirusTotal |
 | :--- | :--- | :--- |
 | **Репозиторий проекта** (`GitHub URL`) | `https://github.com/mmikhnev/awg-warp-auto` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-Clean%20URL-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/url/aHR0cHM6Ly9naXRodWIuY29tL21taWtobmV2L2F3Zy13YXJwLWF1dG8) |
-| **Онлайн-инсталлер** (`install.sh`) | `010c68832bda4a0a9d673d5093e7934e4acce371bb62d3bfdd059c3e81681387` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/010c68832bda4a0a9d673d5093e7934e4acce371bb62d3bfdd059c3e81681387) |
+| **Онлайн-инсталлер** (`install.sh`) | `b4edc1ea01ebdcec00d9c011f186172b44b72e8383d6563e93945dda5eef562a` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/b4edc1ea01ebdcec00d9c011f186172b44b72e8383d6563e93945dda5eef562a) |
 | **Релизный архив** (`awg-warp-auto-release.tar.gz`) | `5b425bb0ed191179f60c03730d8acd2cfc2a5d187fe381a02e2bbca96bb0500b` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/5b425bb0ed191179f60c03730d8acd2cfc2a5d187fe381a02e2bbca96bb0500b) |
 | **Офлайн-установщик** (`awg-warp-auto-installer.zip`) | `31f4180d49c3166fc0f873ae812f600a4c8779bc00f5e99a6bcbb2f1bbe895a6` | [![VirusTotal](https://img.shields.io/badge/VirusTotal-0%2F65-brightgreen?logo=virustotal)](https://www.virustotal.com/gui/file/31f4180d49c3166fc0f873ae812f600a4c8779bc00f5e99a6bcbb2f1bbe895a6) |
 

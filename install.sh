@@ -33,7 +33,6 @@ if [ ! -f /etc/openwrt_release ]; then
 	exit 1
 fi
 
-clear 2>/dev/null || true
 echo "${C_CYAN}======================================================================${C_RESET}"
 echo "${C_BOLD}${C_CYAN}          WARP Auto & AmneziaWG — Управление на OpenWrt               ${C_RESET}"
 echo "${C_CYAN}======================================================================${C_RESET}"
@@ -44,7 +43,11 @@ echo "  ${C_CYAN}[2] Обновление${C_RESET} — обновление к�
 echo "  ${C_RED}[3] Удаление${C_RESET}   — полное удаление AmneziaWG и WARP Auto (Forkop не трогаем)"
 echo ""
 printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}"
-read -r choice || choice=""
+if [ -t 0 ]; then
+	read -r choice || choice=""
+else
+	read -r choice </dev/tty 2>/dev/null || choice=""
+fi
 
 ACTION="install"
 case "$choice" in
