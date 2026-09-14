@@ -83,8 +83,8 @@ for dns in $resolvers_list; do
 	fi
 	[ -n "$yt_ip" ] && { [ "$MEASURE_SPEED" != 1 ] || [ -n "$cf_speed_ip" ]; } && break
 done
-[ -n "$yt_ip" ] || yt_ip='142.250.74.206'
-direct_code=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "www.youtube.com:443:$yt_ip" \
+[ -n "$yt_ip" ] || yt_ip='142.251.150.4'
+direct_code=$(curl -4 --noproxy '*' --interface "$IFACE" --resolve "www.youtube.com:443:$yt_ip" \
 	-L -sS -o /dev/null -w '%{http_code}' --connect-timeout "$TIMEOUT" --max-time "$TIMEOUT" \
 	https://www.youtube.com/generate_204 2>/dev/null)
 case "$direct_code" in 200|204) ;; *) echo "FAIL ${global_result:-global_ok} direct_http_$direct_code"; exit 1 ;; esac
@@ -101,7 +101,7 @@ latency=$((end - start))
 speed_mbps=0
 if [ "$MEASURE_SPEED" = 1 ]; then
 	[ -n "$cf_speed_ip" ] || cf_speed_ip='172.66.0.218'
-	speed_bps=$(curl -4 --noproxy '*' --interface "$ADDR4" --resolve "speed.cloudflare.com:443:$cf_speed_ip" \
+	speed_bps=$(curl -4 --noproxy '*' --interface "$IFACE" --resolve "speed.cloudflare.com:443:$cf_speed_ip" \
 		-L -sS -o /dev/null -w '%{speed_download}' --connect-timeout 3 --max-time 12 \
 		"https://speed.cloudflare.com/__down?bytes=25000000" 2>/dev/null | cut -d. -f1)
 	if [ -n "$speed_bps" ] && [ "$speed_bps" -gt 0 ] 2>/dev/null; then

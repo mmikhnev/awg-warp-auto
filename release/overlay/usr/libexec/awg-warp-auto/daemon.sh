@@ -219,7 +219,7 @@ test_one() {
 	[ -r "$(entry_file "$id")" ] || return 2
 	timeout=$(number "$(option health_timeout)" 4)
 	resolvers=$(option health_resolvers)
-	[ -n "$resolvers" ] || resolvers='1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1'
+	[ -n "$resolvers" ] || resolvers='77.88.8.8 77.88.8.1 8.8.8.8 1.1.1.1 9.9.9.9'
 
 	if [ "$id" = "$(option active_id)" ]; then
 		iface=$(interface_name)

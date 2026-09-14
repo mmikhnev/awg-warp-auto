@@ -474,7 +474,7 @@ function runtimeHealthCheck(mode, iface) {
 	let timeout = 10;
 	let resources = [ 'youtube.com' ];
 	let attempts = 2;
-	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	let resolvers = '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9';
 	mode = autoHealthMode(mode, 'strict');
 	const uci = cursor();
 	if (uci.load(AUTO_CONFIG)) {
@@ -551,7 +551,7 @@ function autoHealth(timeout, resources, mode, measure_speed) {
 	resources = autoResources(resources);
 	mode = autoHealthMode(mode, 'strict');
 	const uci = cursor();
-	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	let resolvers = '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9';
 	if (uci.load(AUTO_CONFIG)) {
 		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);
 		if (main) {
@@ -574,7 +574,7 @@ function autoProbeCandidate(id, timeout) {
 	if (!parsed.ok) return failure('Candidate configuration is invalid');
 	timeout = autoNumber(timeout, 10, 3, 30);
 	const uci = cursor();
-	let resolvers = '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+	let resolvers = '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9';
 	let is_active = false;
 	if (uci.load(AUTO_CONFIG)) {
 		const main = uci.get_all(AUTO_CONFIG, AUTO_MAIN);

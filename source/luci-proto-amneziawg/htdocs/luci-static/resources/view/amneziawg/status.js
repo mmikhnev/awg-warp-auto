@@ -605,7 +605,7 @@ return view.extend({
 			health_mode: fields.health_mode.checked ? 'strict' : 'direct',
 			log_level: fields.log_level.value,
 			critical_resource: resources,
-			health_resolvers: String(fields.health_resolvers ? fields.health_resolvers.value : '').trim() || '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1'
+			health_resolvers: String(fields.health_resolvers ? fields.health_resolvers.value : '').trim() || '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9'
 		};
 	},
 
@@ -652,7 +652,7 @@ return view.extend({
 			return String(value).trim().length;
 		}).join('\n') || 'youtube.com';
 		if (fields.health_resolvers)
-			fields.health_resolvers.value = settings.health_resolvers || '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1';
+			fields.health_resolvers.value = settings.health_resolvers || '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9';
 		this.updateProviderFields();
 	},
 
@@ -2362,7 +2362,7 @@ return view.extend({
 		var healthTimeout = makeInput('health_timeout', 'number', { 'min': 1, 'step': 1 });
 		var strictHealth = makeInput('health_mode', 'checkbox', { 'class': 'cbi-input-checkbox' });
 		var healthResolvers = makeInput('health_resolvers', 'text', {
-			'placeholder': '1.1.1.1 8.8.8.8 9.9.9.9 77.88.8.8 77.88.8.1',
+			'placeholder': '77.88.8.8 77.88.8.1 1.1.1.1 8.8.8.8 9.9.9.9',
 			'style': 'width:100%; max-width:40em'
 		});
 		var logLevel = E('select', { 'class': 'cbi-input-select', 'name': 'log_level' }, [

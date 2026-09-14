@@ -69,7 +69,7 @@ function autoResolvers(value) {
 			push(list, ip);
 		}
 	}
-	return length(list) ? list : [ '1.1.1.1', '8.8.8.8', '9.9.9.9', '77.88.8.8', '77.88.8.1' ];
+	return length(list) ? list : [ '77.88.8.8', '77.88.8.1', '8.8.8.8', '1.1.1.1', '9.9.9.9' ];
 }
 
 function targetInterface() {
@@ -291,7 +291,7 @@ function runtimeHealthCheck(mode, iface) {
 	}
 	let result = "no health-check result";
 	for (let attempt = 0; attempt < attempts; attempt++) {
-		result = command(`sleep 1; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ","))} ${mode} ${shellquote(resolvers)} 2>&1`);
+		result = command(`sleep 2; /usr/libexec/awg-warp-auto/health-check.sh ${shellquote(iface)} ${timeout} ${shellquote(join(resources, ","))} ${mode} ${shellquote(resolvers)} 2>&1`);
 		const parts = split(trim(result), ' ');
 		if (parts[0] == 'OK' && parts[1])
 			return { ok: true, detail: result };
