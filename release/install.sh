@@ -279,9 +279,11 @@ fi
 
 if [ "$PKG_MGR" = "apk" ] && [ -n "$LUCI_APK" ] && [ -f "$LUCI_APK" ]; then
 	echo "Installing bundled $LUCI_APK..."
-	apk add --allow-untrusted "$LUCI_APK" 2>/dev/null || true
-elif [ -d "$BASE_DIR/overlay" ]; then
-	echo "Installing WARP Auto application files from overlay..."
+	apk add --clean-protected --allow-untrusted "$LUCI_APK" 2>/dev/null || apk add --allow-untrusted "$LUCI_APK" 2>/dev/null || true
+fi
+
+if [ -d "$BASE_DIR/overlay" ]; then
+	echo "Applying WARP Auto application overlay..."
 	cp -r "$BASE_DIR/overlay/"* /
 	chmod 644 /usr/share/rpcd/ucode/luci.amneziawg \
 	          /www/luci-static/resources/view/amneziawg/status.js \

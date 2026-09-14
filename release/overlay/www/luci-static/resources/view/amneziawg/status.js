@@ -862,26 +862,56 @@ return view.extend({
 		}
 
 		dom.content(this.autoRuntimeNode, [ dashboard, activeConnCard ].filter(Boolean));
+	},
 
-		callGetForkopStatus().then(L.bind(function(fst) {
-			if (fst && fst.installed) {
-				var forkopSec = fst.managed_section;
-				var forkopNode = E('div', {
-					'class': 'cbi-section',
-					'style': 'background-color:var(--background-color-low); border:1px solid var(--border-color-medium); border-radius:4px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;'
-				}, [
+	renderForkopSection: function(fst) {
+		if (!this.autoForkopNode && !this.settingsForkopNode) return;
+		if (!fst || !fst.installed) {
+			var uninstNode = E('div', {
+				'class': 'cbi-section',
+				'style': 'background-color:var(--background-color-low); border:1px solid var(--border-color-medium); border-left:4px solid var(--text-color-low, #7f8c8d); border-radius:4px; padding:12px 16px; margin-bottom:16px;'
+			}, [
+				E('div', { 'style': 'display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;' }, [
 					E('div', [
-						E('strong', [ _('Forkop (sing-box): ') ]),
-						forkopSec
-							? E('span', { 'class': 'badge badge-success', 'style': 'background:#27ae60; color:#fff; padding:2px 8px; border-radius:3px; margin-left:6px; font-weight:600;' }, [ _('Секция "%s" активна').format(forkopSec) ])
-							: E('span', { 'class': 'badge badge-neutral', 'style': 'background:#7f8c8d; color:#fff; padding:2px 8px; border-radius:3px; margin-left:6px;' }, [ _('Не привязана') ]),
-						E('span', { 'style': 'font-size:12px; color:var(--text-color-medium); margin-left:10px;' }, [
+						E('h4', { 'style': 'margin:0 0 4px 0; font-size:15px;' }, [
+							_('Forkop (sing-box): '),
+							E('span', { 'class': 'badge badge-neutral', 'style': 'background:#7f8c8d; color:#fff; padding:2px 8px; border-radius:3px; font-weight:600; font-size:12px;' }, [ _('Служба не установлена') ])
+						]),
+						E('p', { 'style': 'margin:0; font-size:13px; color:var(--text-color-medium);' }, [
+							_('Служба Forkop не обнаружена. Маршрутизация трафика осуществляется через базовые правила OpenWrt.')
+						])
+					])
+				])
+			]);
+			if (this.autoForkopNode) dom.content(this.autoForkopNode, [ uninstNode ]);
+			if (this.settingsForkopNode) dom.content(this.settingsForkopNode, [ uninstNode.cloneNode(true) ]);
+			return;
+		}
+
+		var forkopSec = fst.managed_section;
+		var targetIface = fst.target_interface || (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
+
+		var buildCard = L.bind(function() {
+			return E('div', {
+				'class': 'cbi-section',
+				'style': 'background-color:var(--background-color-low); border:1px solid var(--border-color-medium); border-left:4px solid ' + (forkopSec ? 'var(--success-color-high, #27ae60)' : 'var(--warn-color-high, #f39c12)') + '; border-radius:4px; padding:14px 18px; margin-bottom:16px;'
+			}, [
+				E('div', { 'style': 'display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;' }, [
+					E('div', { 'style': 'flex:1; min-width:280px;' }, [
+						E('h4', { 'style': 'margin:0 0 6px 0; font-size:15px; display:flex; align-items:center; gap:8px;' }, [
+							E('span', { 'style': 'font-size:18px;' }, '⚡'),
+							E('strong', [ _('Forkop (sing-box) — Маршрутизация YouTube') ]),
 							forkopSec
-								? _('Домены YouTube направляются через AmneziaWG')
-								: _('Можно привязать AmneziaWG для обхода блокировок YouTube')
+								? E('span', { 'class': 'badge badge-success', 'style': 'background:#27ae60; color:#fff; padding:3px 10px; border-radius:3px; font-weight:600; font-size:12px;' }, [ _('Секция "%s" активна').format(forkopSec) ])
+								: E('span', { 'class': 'badge badge-warning', 'style': 'background:#f39c12; color:#fff; padding:3px 10px; border-radius:3px; font-weight:600; font-size:12px;' }, [ _('Секция не создана') ])
+						]),
+						E('p', { 'style': 'margin:0; font-size:13px; color:var(--text-color-medium); line-height:1.4;' }, [
+							forkopSec
+								? _('Все домены YouTube направляются в sing-box через туннель AmneziaWG (интерфейс %s). Сторонние секции Forkop не затронуты.').format(targetIface)
+								: _('Служба Forkop обнаружена на роутере. Вы можете привязать маршрутизацию YouTube к интерфейсу %s в один клик.').format(targetIface)
 						])
 					]),
-					E('div', [
+					E('div', { 'style': 'display:flex; gap:8px; align-items:center;' }, [
 						forkopSec
 							? E('button', {
 								'class': 'btn cbi-button cbi-button-remove',
@@ -895,22 +925,21 @@ return view.extend({
 							: E('button', {
 								'class': 'btn cbi-button cbi-button-action',
 								'click': L.bind(function() {
-									var iface = (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
-									callConfigureForkopSection(iface).then(L.bind(function(res) {
+									callConfigureForkopSection(targetIface).then(L.bind(function(res) {
 										if (res && res.ok) {
-											this.showNotification(_('Секция Forkop "%s" создана.').format(res.section), 'info');
+											this.showNotification(_('Секция Forkop "%s" создана и подключена к %s!').format(res.section, targetIface), 'info');
 											this.updateWarpAuto();
 										}
 									}, this));
 								}, this)
-							}, [ _('Добавить в Forkop') ])
+							}, [ _('Подключить YouTube в Forkop') ])
 					])
-				]);
-				if (this.autoRuntimeNode) {
-					this.autoRuntimeNode.appendChild(forkopNode);
-				}
-			}
-		}, this)).catch(function() {});
+				])
+			]);
+		}, this);
+
+		if (this.autoForkopNode) dom.content(this.autoForkopNode, [ buildCard() ]);
+		if (this.settingsForkopNode) dom.content(this.settingsForkopNode, [ buildCard() ]);
 	},
 
 	renderWarpAutoPool: function(state) {
@@ -1257,8 +1286,12 @@ return view.extend({
 	},
 
 	updateWarpAuto: function() {
-		return callGetWarpAutoStatus().then(L.bind(function(state) {
-			state = state || {};
+		return Promise.all([
+			callGetWarpAutoStatus(),
+			callGetForkopStatus().catch(function() { return null; })
+		]).then(L.bind(function(results) {
+			var state = results[0] || {};
+			var forkopStatus = results[1] || null;
 			if (state.ok === false)
 				throw new Error(state.error || _('Unable to read WARP Auto status'));
 
@@ -1268,6 +1301,7 @@ return view.extend({
 				this.setWarpAutoSettings(state.settings);
 			this.autoSettingsLoaded = true;
 			this.renderWarpAutoRuntime(state);
+			this.renderForkopSection(forkopStatus);
 			this.renderWarpAutoPool(state);
 			this.renderWarpAutoLogs(state);
 
@@ -1931,9 +1965,10 @@ return view.extend({
 	},
 
 	attachBootstrapModal: function() {
-		var stepCheck = E('li', { 'style': 'margin-bottom:8px;' }, [ '⚪ ', _('Checking environment & requirements…') ]);
+		var stepCheck = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Checking runtime dependencies…') ]);
 		var stepFetch = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Generating and testing initial WARP profile…') ]);
 		var stepIface = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Configuring network interface and policy routing…') ]);
+		var stepForkop = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Integrating with Forkop (sing-box) for YouTube…') ]);
 		var stepFinal = E('li', { 'style': 'margin-bottom:8px; opacity:0.5;' }, [ '⚪ ', _('Finalizing interface activation…') ]);
 
 		var runInBackgroundBtn = E('button', {
@@ -1944,9 +1979,9 @@ return view.extend({
 		}, [ _('Run in background') ]);
 
 		var modalContent = E('div', { 'class': 'warp-auto-bootstrap-modal' }, [
-			E('p', [ _('Setting up dedicated WARP interface. Please wait…') ]),
+			E('p', [ _('Setting up dedicated WARP interface and routing. Please wait…') ]),
 			E('ul', { 'style': 'list-style:none; padding-left:0; line-height:1.6;' }, [
-				stepCheck, stepFetch, stepIface, stepFinal
+				stepCheck, stepFetch, stepIface, stepForkop, stepFinal
 			]),
 			E('div', { 'class': 'right', 'style': 'margin-top:16px; display:flex; justify-content:flex-end;' }, [
 				runInBackgroundBtn
@@ -2003,13 +2038,34 @@ return view.extend({
 						clearInterval(pollInterval);
 						setStep(stepFetch, 'done', _('Initial profile generated and tested'));
 						setStep(stepIface, 'done', _('Network interface and routing configured'));
-						setStep(stepFinal, 'done', _('WARP interface created and active'));
-						setTimeout(L.bind(function() {
-							ui.hideModal();
-							cleanup();
-							this.showNotification(_('WARP interface created successfully!'), 'info');
-							resolve();
-						}, this), 1000);
+
+						callGetForkopStatus().then(L.bind(function(fst) {
+							if (fst && fst.installed) {
+								setStep(stepForkop, 'active', _('Configuring YouTube routing section in Forkop…'));
+								var targetIface = (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
+								return callConfigureForkopSection(targetIface).then(L.bind(function(res) {
+									if (res && res.ok) {
+										setStep(stepForkop, 'done', _('Forkop section "%s" created and linked to %s').format(res.section, targetIface));
+									} else {
+										setStep(stepForkop, 'done', _('Forkop section active'));
+									}
+								}, this)).catch(function() {
+									setStep(stepForkop, 'done', _('Forkop setup skipped'));
+								});
+							} else {
+								setStep(stepForkop, 'done', _('Forkop not installed (standalone mode)'));
+							}
+						}, this)).catch(function() {
+							setStep(stepForkop, 'done', _('Forkop check skipped'));
+						}).finally(L.bind(function() {
+							setStep(stepFinal, 'done', _('WARP interface created and active'));
+							setTimeout(L.bind(function() {
+								ui.hideModal();
+								cleanup();
+								this.showNotification(_('WARP interface created and configured successfully!'), 'info');
+								resolve();
+							}, this), 1000);
+						}, this));
 					} else if (rt.bootstrap_state === 'failed') {
 						clearInterval(pollInterval);
 						setStep(stepFinal, 'failed', _('Bootstrap failed: %s').format(rt.bootstrap_error || _('activation failed')));
@@ -2377,6 +2433,8 @@ return view.extend({
 		this.autoActionButtons = [ bootstrapButton, generateButton, testButton, cleanButton ];
 		this.autoMessageNode = E('span', { 'style': 'margin-left:1em' });
 		this.autoRuntimeNode = E('div', [ E('em', [ _('Loading WARP Auto status…') ]) ]);
+		this.autoForkopNode = E('div', [ E('em', [ _('Loading Forkop status…') ]) ]);
+		this.settingsForkopNode = E('div', [ E('em', [ _('Loading Forkop status…') ]) ]);
 		this.autoPoolNode = E('div', [ E('em', [ _('Loading WARP Auto pool…') ]) ]);
 		this.autoLogsNode = E('div', [ E('em', [ _('Loading WARP Auto logs…') ]) ]);
 		this.autoSettingsLoaded = false;
@@ -2423,6 +2481,7 @@ return view.extend({
 				content: [
 					E('p', [ _('Runtime state, active connection details, and profile pool.') ]),
 					this.autoRuntimeNode,
+					this.autoForkopNode,
 					E('h3', [ _('Profile Pool') ]),
 					this.autoPoolNode,
 					E('div', { 'class': 'cbi-page-actions', 'style': 'margin-top:16px;' }, [
@@ -2456,6 +2515,9 @@ return view.extend({
 						]),
 						E('div', [ bootstrapButton ])
 					]),
+
+					// FORKOP INTEGRATION IN SETTINGS
+					this.settingsForkopNode,
 
 					// SECTION 1: GENERAL
 					E('div', { 'class': 'cbi-section', 'style': 'border:1px solid var(--border-color-medium); border-radius:4px; padding:12px 16px; margin-bottom:16px;' }, [
