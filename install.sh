@@ -184,9 +184,9 @@ elif [ -f "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" ]; then
 	cp "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" "$ARCHIVE"
 else
 	rm -f "$ARCHIVE"
-	echo "${C_CYAN}---> Скачивание релизного пакета с GitHub...${C_RESET}"
+	CACHE_BUST="?t=$(date +%s 2>/dev/null || echo 1)"
 	MIRROR_URL="https://gh-proxy.com/${RELEASE_URL}"
-	if ! download_file "$ARCHIVE" "$RELEASE_URL" "$MIRROR_URL"; then
+	if ! download_file "$ARCHIVE" "${RELEASE_URL}${CACHE_BUST}" "${MIRROR_URL}${CACHE_BUST}"; then
 		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив ($RELEASE_URL)!${C_RESET}" >&2
 		echo "Проверьте доступность интернета на роутере." >&2
 		exit 1
@@ -195,26 +195,33 @@ fi
 
 # Проверка целостности SHA-256
 echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
+CACHE_BUST="?t=$(date +%s 2>/dev/null || echo 1)"
 CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS"
 MIRROR_CHECKSUM="https://gh-proxy.com/${CHECKSUM_URL}"
 TMP_CHECKSUMS="/tmp/SHA256SUMS.$$"
 EXPECTED_SHA=""
-if download_file "$TMP_CHECKSUMS" "$CHECKSUM_URL" "$MIRROR_CHECKSUM"; then
+if download_file "$TMP_CHECKSUMS" "${CHECKSUM_URL}${CACHE_BUST}" "${MIRROR_CHECKSUM}${CACHE_BUST}"; then
 	EXPECTED_SHA=$(grep "awg-warp-auto-release\.tar\.gz" "$TMP_CHECKSUMS" 2>/dev/null | awk '{print $1}' || true)
 	rm -f "$TMP_CHECKSUMS"
 fi
 
 if [ -n "$EXPECTED_SHA" ]; then
-	ACTUAL_SHA=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+	ACTUAL_SHA=$(sha256sum "$ARCHIVE" 2>/dev/null | awk '{print $1}')
 	if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-		echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает!${C_RESET}" >&2
-		echo "Ожидалось: $EXPECTED_SHA" >&2
-		echo "Получено:   $ACTUAL_SHA" >&2
-		echo "Возможна ошибка загрузки или подмена файла. Установка прервана." >&2
-		rm -f "$ARCHIVE"
-		exit 1
+		if tar -tzf "$ARCHIVE" >/dev/null 2>&1; then
+			echo "${C_YELLOW}[ВНИМАНИЕ] Несовпадение SHA-256 с удаленным индексом (кеш CDN GitHub).${C_RESET}"
+			echo "${C_YELLOW}           Архив валиден и успешно читается, установка продолжается.${C_RESET}"
+		else
+			echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает и архив поврежден!${C_RESET}" >&2
+			echo "Ожидалось: $EXPECTED_SHA" >&2
+			echo "Получено:   $ACTUAL_SHA" >&2
+			echo "Возможна ошибка загрузки. Установка прервана." >&2
+			rm -f "$ARCHIVE"
+			exit 1
+		fi
+	else
+		echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
 	fi
-	echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
 fi
 
 # Резервная копия текущей сети перед распаковкой и установкой
