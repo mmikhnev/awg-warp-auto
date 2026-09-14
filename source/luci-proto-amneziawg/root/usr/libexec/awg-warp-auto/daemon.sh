@@ -692,6 +692,26 @@ generate_batch_unlocked() {
 	commit
 	prune_pool
 	log info "batch generation completed provider=$provider requested=$count generated=$gen_total ready=$gen_ready failed=$gen_failed"
+
+	local iface active_candidate
+	iface=$(interface_name)
+	active_candidate=$(option active_id)
+	if [ -z "$active_candidate" ] || ! uci -q show "network.$iface" >/dev/null 2>&1; then
+		log info "interface $iface is missing or unbound after batch; initiating quickstart flow from ready candidates"
+		for id in $(sorted_ready_entries); do
+			set_batch_state running "$provider" "$count" "$gen_total" "$gen_ready" "$gen_failed" "Quickstart: Activating profile $id to create $iface…"
+			if activate_one "$id" direct; then
+				log info "quickstart activation succeeded: created and bound $iface from candidate $id"
+				set_main last_bootstrap "$(now)"
+				set_bootstrap_state ready
+				/etc/init.d/awg-warp-auto enable 2>/dev/null || true
+				/etc/init.d/awg-warp-auto start 2>/dev/null || true
+				set_batch_state complete "$provider" "$count" "$gen_total" "$gen_ready" "$gen_failed" "Batch complete: $gen_ready READY. Quickstart activated interface $iface from candidate $id!"
+				return 0
+			fi
+		done
+	fi
+
 	set_batch_state complete "$provider" "$count" "$gen_total" "$gen_ready" "$gen_failed" "Batch generation complete: $gen_ready READY, $gen_failed FAILED of $count requested."
 	return 0
 }
@@ -751,6 +771,23 @@ native_replenish() {
 	set_main last_refresh "$(now)"
 	[ "$success" -gt 0 ] && native_budget_result 1 || native_budget_result 0
 	prune_pool
+
+	local iface active_candidate
+	iface=$(interface_name)
+	active_candidate=$(option active_id)
+	if [ -z "$active_candidate" ] || ! uci -q show "network.$iface" >/dev/null 2>&1; then
+		for id in $(sorted_ready_entries); do
+			if activate_one "$id" direct; then
+				log info "replenish quickstart: created and activated $iface from candidate $id"
+				set_main last_bootstrap "$(now)"
+				set_bootstrap_state ready
+				/etc/init.d/awg-warp-auto enable 2>/dev/null || true
+				/etc/init.d/awg-warp-auto start 2>/dev/null || true
+				break
+			fi
+		done
+	fi
+
 	[ "$success" -gt 0 ]
 }
 
@@ -766,6 +803,23 @@ refresh_unlocked() {
 	generate_candidates "$fetch_count" || return 1
 	test_candidates new
 	set_main last_refresh "$(now)"
+
+	local iface active_candidate
+	iface=$(interface_name)
+	active_candidate=$(option active_id)
+	if [ -z "$active_candidate" ] || ! uci -q show "network.$iface" >/dev/null 2>&1; then
+		for id in $(sorted_ready_entries); do
+			if activate_one "$id" direct; then
+				log info "remote refresh quickstart: created and activated $iface from candidate $id"
+				set_main last_bootstrap "$(now)"
+				set_bootstrap_state ready
+				/etc/init.d/awg-warp-auto enable 2>/dev/null || true
+				/etc/init.d/awg-warp-auto start 2>/dev/null || true
+				break
+			fi
+		done
+	fi
+
 	commit
 }
 

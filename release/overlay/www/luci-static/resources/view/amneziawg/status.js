@@ -1538,10 +1538,14 @@ return view.extend({
 			}
 		}, [ _('Run in background') ]);
 
+		var isQuickstart = (this.autoInterfaceState == 'missing');
+		var targetIface = (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
+		var descText = isQuickstart
+			? _('Acquiring and testing a batch of %d profiles. Since interface "%s" is not configured yet, the best tested profile will be automatically bound to create it.').format(count, targetIface)
+			: _('Acquiring and testing a batch of %d profiles. This may take 30–90 seconds.').format(count);
+
 		var modalContent = E('div', { 'class': 'warp-auto-batch-modal', 'style': 'padding:10px 0;' }, [
-			E('p', { 'style': 'margin-bottom:12px; color:var(--text-color-medium);' }, [
-				_('Acquiring and testing a batch of %d profiles. This may take 30–90 seconds.').format(count)
-			]),
+			E('p', { 'style': 'margin-bottom:12px; color:var(--text-color-medium);' }, [ descText ]),
 			E('div', { 'class': 'batch-progress-box', 'style': 'background:var(--background-color-low); border:1px solid var(--border-color-medium); border-radius:4px; padding:12px; margin-bottom:14px;' }, [
 				E('div', { 'style': 'display:flex; justify-content:space-between; margin-bottom:8px; font-weight:600;' }, [
 					statusNode, counterNode
@@ -1640,7 +1644,10 @@ return view.extend({
 		var action = 'batch';
 		count = count || 5;
 		this.setWarpAutoBusy(true);
-		this.showWarpAutoMessage(_('Starting batch profile generation…'));
+		var startMsg = (this.autoInterfaceState == 'missing')
+			? _('Starting batch generation and quickstart interface setup…')
+			: _('Starting batch profile generation…');
+		this.showWarpAutoMessage(startMsg);
 
 		return callSaveWarpAutoSettings(this.getWarpAutoSettings(), '1').then(L.bind(function(saved) {
 			if (!saved || saved.ok === false)
