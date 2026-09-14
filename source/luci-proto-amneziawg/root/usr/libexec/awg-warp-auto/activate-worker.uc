@@ -198,6 +198,7 @@ function parseAwgConfig(text, filename) {
 		s1: true, s2: true, s3: true, s4: true, jc: true, jmin: true, jmax: true,
 		h1: true, h2: true, h3: true, h4: true,
 		i1: true, i2: true, i3: true, i4: true, i5: true,
+		headerprotectionkey: true,
 		contentpaddingaddition: true, rekeyaftertime: true, rekeytimeout: true,
 		rejectaftertime: true, keepalivetimeout: true, maxhandshakeattempts: true,
 		randomtrailers: true, disablecookies: true
@@ -386,6 +387,7 @@ uci.set("network", iface, "fwmark", "0x01000000");
 uci.set("network", iface, "mtu", parsed.interface.mtu);
 uci.set("network", iface, "addresses", parsed.addresses);
 for (let field in [ "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5",
+                    "headerprotectionkey",
                     "contentpaddingaddition", "rekeyaftertime", "rekeytimeout", "rejectaftertime", "keepalivetimeout", "maxhandshakeattempts",
                     "randomtrailers", "disablecookies" ])
 	if (parsed.interface[field] != null) uci.set("network", iface, `awg_${field}`, parsed.interface[field]);

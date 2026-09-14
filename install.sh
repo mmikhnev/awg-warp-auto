@@ -115,6 +115,25 @@ if [ "$ACTION" = "uninstall" ]; then
 	fi
 	uci commit network 2>/dev/null || true
 
+	# Удаление связанной секции Forkop (только созданной нами)
+	if [ -f /etc/config/forkop ]; then
+		managed_forkop_sec=$(uci -q get awg-warp-auto.main.forkop_section || true)
+		if [ -z "$managed_forkop_sec" ]; then
+			managed_forkop_sec=$(uci -q show forkop | grep "\.name='${warp_iface:-YTwarp}'" | cut -d. -f2 | cut -d= -f1)
+			[ -n "$managed_forkop_sec" ] && managed_forkop_sec=$(uci -q get "forkop.$managed_forkop_sec.section" || true)
+		fi
+		if [ -n "$managed_forkop_sec" ] && uci -q get "forkop.$managed_forkop_sec" >/dev/null 2>&1; then
+			echo "${C_CYAN}[2.5/5]${C_RESET} Удаление секции Forkop '$managed_forkop_sec'..."
+			uci -q delete "forkop.$managed_forkop_sec" || true
+			for si in $(uci -q show forkop | grep "\.section='$managed_forkop_sec'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "forkop.$si" || true
+			done
+			uci commit forkop 2>/dev/null || true
+			/etc/init.d/forkop reload 2>/dev/null || true
+			echo "${C_GREEN}[✓] Секция Forkop '$managed_forkop_sec' удалена, sing-box обновлен${C_RESET}"
+		fi
+	fi
+
 	echo "${C_CYAN}[3/5]${C_RESET} Удаление компонентов приложения..."
 	if [ "$uninst_scope" = "2" ]; then
 		if command -v apk >/dev/null 2>&1; then
@@ -289,10 +308,130 @@ fi
 # 4. ИНТЕГРАЦИЯ С FORKOP
 # --------------------------------------------------------------------
 echo ""
-echo "${C_CYAN}=== Проверка Forkop ===${C_RESET}"
-if [ -f /etc/init.d/forkop ] || command -v forkop >/dev/null 2>&1; then
+echo "${C_CYAN}=== Интеграция с Forkop (sing-box) ===${C_RESET}"
+if [ -f /etc/config/forkop ] && [ -f /etc/init.d/forkop ]; then
 	echo "${C_GREEN}[✓] Forkop обнаружен на роутере.${C_RESET}"
-	echo "    В интерфейсе Forkop выберите сетевой интерфейс ${C_BOLD}YTwarp${C_RESET} для секции YouTube."
+	printf "${C_BOLD}${C_YELLOW}Создать секцию маршрутизации YouTube в Forkop прямо сейчас? [Y/n]: ${C_RESET}"
+	read -r setup_forkop || setup_forkop=""
+	case "$setup_forkop" in
+		[nN]|[nN][oO]|[нН]|[нН][еЕ][тТ])
+			echo "Пропуск настройки Forkop."
+			;;
+		*)
+			# Find next unused name: YT, YT2, YT3...
+			sec_name="YT"
+			if uci -q get "forkop.$sec_name" >/dev/null 2>&1; then
+				i=2
+				while uci -q get "forkop.YT${i}" >/dev/null 2>&1; do
+					i=$((i + 1))
+				done
+				sec_name="YT${i}"
+			fi
+
+			warp_target_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
+			echo "${C_CYAN}---> Создание секции Forkop '$sec_name' для интерфейса '$warp_target_iface'...${C_RESET}"
+
+			uci set "forkop.$sec_name=section"
+			uci set "forkop.$sec_name.enabled=1"
+			uci set "forkop.$sec_name.action=connection"
+			uci set "forkop.$sec_name.sort_by_latency=1"
+			uci set "forkop.$sec_name.outbound_detour_enabled=0"
+			uci set "forkop.$sec_name.mixed_proxy_enabled=0"
+			uci set "forkop.$sec_name.resolve_real_ip_for_routing=0"
+			uci set "forkop.$sec_name.dashboard_filter_mode=disabled"
+			uci set "forkop.$sec_name.domain=youtube.com
+googlevideo.com
+ytimg.com
+youtube-nocookie.com
+youtu.be
+googleusercontent.com
+ggpht.com
+netlify.app
+googleadservices.com
+doubleclick.net
+firebaseio.com
+smarttube-tv.firebaseio.com
+smarttube-tv.firebasestorage.app
+sponsor.ajay.app
+sponsorblock.org
+dearrow.ajay.app
+returnyoutubedislikeapi.com
+api.github.com
+raw.githubusercontent.com
+objects.githubusercontent.com
+yting.com
+youtubekids.com
+yt.be
+wide-youtube.l.google.com
+ytimg.l.google.com
+youtubei.googleapis.com
+youtube.googleapis.com
+youtubeembeddedplayer.googleapis.com
+youtube-ui.l.google.com
+yt-video-upload.l.google.com
+jnn-pa.googleapis.com
+yt3.googleusercontent.com
+yt.ggpht.com
+yt3.ggpht.com
+yt4.ggpht.com
+img.youtube.com
+i.ytimg.com
+i1.ytimg.com
+i2.ytimg.com
+i3.ytimg.com
+i4.ytimg.com
+i5.ytimg.com
+i6.ytimg.com
+i7.ytimg.com
+i8.ytimg.com
+i9.ytimg.com
+s.ytimg.com
+manifest.googlevideo.com
+gstatic.com
+googleapis.com
+l.google.com
+1e100.net
+gvt1.com
+gvt2.com
+gvt3.com
+gvt4.com
+play.google.com
+play.googleapis.com
+play-fe.googleapis.com
+android.clients.google.com
+play-lh.googleusercontent.com
+nhacmp3youtube.com
+withyoutube.com
+m.youtube.com
+music.youtube.com
+studio.youtube.com
+tv.youtube.com
+kids.youtube.com
+s.youtube.com
+cdn.youtube.com
+signaler-pa.youtube.com
+speed.cloudflare.com
+2ip.io"
+
+			for s in $(uci -q show forkop | grep "\.section='$sec_name'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "forkop.$s"
+			done
+
+			sif=$(uci add forkop section_interface)
+			uci set "forkop.$sif.section=$sec_name"
+			uci set "forkop.$sif.name=$warp_target_iface"
+			uci set "forkop.$sif.domain_resolver_enabled=0"
+			uci set "forkop.$sif.domain_resolver_dns_type=udp"
+			uci set "forkop.$sif.domain_resolver_dns_server=8.8.8.8"
+			uci commit forkop
+
+			uci -q set "awg-warp-auto.main.forkop_section=$sec_name"
+			uci -q commit awg-warp-auto
+
+			/etc/init.d/forkop reload 2>/dev/null || true
+			echo "${C_GREEN}[✓] Секция Forkop '$sec_name' успешно создана и применена!${C_RESET}"
+			;;
+	esac
 else
 	echo "${C_YELLOW}[!] Forkop не обнаружен на роутере.${C_RESET}"
 	echo "    Forkop позволяет направлять трафик отдельных сервисов (YouTube, Discord и др.)"

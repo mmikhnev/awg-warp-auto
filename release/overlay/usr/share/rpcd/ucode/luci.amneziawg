@@ -1207,6 +1207,9 @@ const methods = {
 			if (ifsec.mtu) conf += `MTU = ${ifsec.mtu}\n`;
 			if (ifsec.listen_port) conf += `ListenPort = ${ifsec.listen_port}\n`;
 
+			const hpk = ifsec.awg_header_protection_key || ifsec.awg_headerprotectionkey;
+			if (hpk) conf += `HeaderProtectionKey = ${hpk}\n`;
+
 			for (let f in [ 'jc', 'jmin', 'jmax', 's1', 's2', 's3', 's4', 'h1', 'h2', 'h3', 'h4', 'i1', 'i2', 'i3', 'i4', 'i5' ]) {
 				const val = ifsec[`awg_${f}`];
 				if (val != null) conf += `${uc(substr(f,0,1)) + substr(f,1)} = ${val}\n`;
@@ -1220,13 +1223,13 @@ const methods = {
 				maxhandshakeattempts: 'MaxHandshakeAttempts'
 			};
 			for (let f in [ 'contentpaddingaddition', 'rekeyaftertime', 'rekeytimeout', 'rejectaftertime', 'keepalivetimeout', 'maxhandshakeattempts' ]) {
-				const val = ifsec[`awg_${f}`];
+				const val = ifsec[`awg_${f}`] ?? ifsec[`awg_${f}`];
 				if (val != null) conf += `${rangeNames[f]} = ${val}\n`;
 			}
 			const boolNames = { randomtrailers: 'RandomTrailers', disablecookies: 'DisableCookies' };
 			for (let f in [ 'randomtrailers', 'disablecookies' ]) {
 				const val = ifsec[`awg_${f}`];
-				if (val != null) conf += `${boolNames[f]} = ${val}\n`;
+				if (val != null && val != '0' && val != '') conf += `${boolNames[f]} = 1\n`;
 			}
 
 			if (peer && peer.public_key) {
@@ -1382,6 +1385,202 @@ const methods = {
 			}
 
 			return data;
+		}
+	},
+
+	getForkopStatus: {
+		call: function() {
+			const installed = (stat('/etc/config/forkop') != null && stat('/etc/init.d/forkop') != null);
+			if (!installed) {
+				return { installed: false };
+			}
+			const uci = cursor();
+			uci.load('awg-warp-auto');
+			const managed_sec = uci.get('awg-warp-auto', 'main', 'forkop_section');
+			const iface = uci.get('awg-warp-auto', 'main', 'interface') || 'YTwarp';
+
+			uci.load('forkop');
+			let sec_info = null;
+			if (managed_sec) {
+				const s = uci.get_all('forkop', managed_sec);
+				if (s) {
+					sec_info = {
+						name: managed_sec,
+						enabled: s.enabled == '1',
+						action: s.action || 'connection'
+					};
+				}
+			}
+
+			return {
+				installed: true,
+				managed_section: managed_sec,
+				section_info: sec_info,
+				target_interface: iface
+			};
+		}
+	},
+
+	configureForkopSection: {
+		args: { iface: "iface" },
+		call: function(req) {
+			if (!(stat('/etc/config/forkop') != null && stat('/etc/init.d/forkop') != null))
+				return failure("Forkop is not installed on this router");
+
+			const uci = cursor();
+			uci.load('awg-warp-auto');
+			const target_iface = validInterfaceName(req.args?.iface) || uci.get('awg-warp-auto', 'main', 'interface') || 'YTwarp';
+
+			uci.load('forkop');
+			let sec_name = uci.get('awg-warp-auto', 'main', 'forkop_section');
+			if (!sec_name || !uci.get('forkop', sec_name)) {
+				if (!uci.get('forkop', 'YT')) {
+					sec_name = 'YT';
+				} else {
+					for (let i = 2; i < 100; i++) {
+						const candidate = `YT${i}`;
+						if (!uci.get('forkop', candidate)) {
+							sec_name = candidate;
+							break;
+						}
+					}
+					if (!sec_name) sec_name = `YT_${time()}`;
+				}
+			}
+
+			const domains = [
+				'youtube.com',
+				'googlevideo.com',
+				'ytimg.com',
+				'youtube-nocookie.com',
+				'youtu.be',
+				'googleusercontent.com',
+				'ggpht.com',
+				'netlify.app',
+				'googleadservices.com',
+				'doubleclick.net',
+				'firebaseio.com',
+				'smarttube-tv.firebaseio.com',
+				'smarttube-tv.firebasestorage.app',
+				'sponsor.ajay.app',
+				'sponsorblock.org',
+				'dearrow.ajay.app',
+				'returnyoutubedislikeapi.com',
+				'api.github.com',
+				'raw.githubusercontent.com',
+				'objects.githubusercontent.com',
+				'yting.com',
+				'youtubekids.com',
+				'yt.be',
+				'wide-youtube.l.google.com',
+				'ytimg.l.google.com',
+				'youtubei.googleapis.com',
+				'youtube.googleapis.com',
+				'youtubeembeddedplayer.googleapis.com',
+				'youtube-ui.l.google.com',
+				'yt-video-upload.l.google.com',
+				'jnn-pa.googleapis.com',
+				'yt3.googleusercontent.com',
+				'yt.ggpht.com',
+				'yt3.ggpht.com',
+				'yt4.ggpht.com',
+				'img.youtube.com',
+				'i.ytimg.com',
+				'i1.ytimg.com',
+				'i2.ytimg.com',
+				'i3.ytimg.com',
+				'i4.ytimg.com',
+				'i5.ytimg.com',
+				'i6.ytimg.com',
+				'i7.ytimg.com',
+				'i8.ytimg.com',
+				'i9.ytimg.com',
+				's.ytimg.com',
+				'manifest.googlevideo.com',
+				'gstatic.com',
+				'googleapis.com',
+				'l.google.com',
+				'1e100.net',
+				'gvt1.com',
+				'gvt2.com',
+				'gvt3.com',
+				'gvt4.com',
+				'play.google.com',
+				'play.googleapis.com',
+				'play-fe.googleapis.com',
+				'android.clients.google.com',
+				'play-lh.googleusercontent.com',
+				'nhacmp3youtube.com',
+				'withyoutube.com',
+				'm.youtube.com',
+				'music.youtube.com',
+				'studio.youtube.com',
+				'tv.youtube.com',
+				'kids.youtube.com',
+				's.youtube.com',
+				'cdn.youtube.com',
+				'signaler-pa.youtube.com',
+				'speed.cloudflare.com',
+				'2ip.io'
+			];
+
+			uci.set('forkop', sec_name, 'section');
+			uci.set('forkop', sec_name, 'enabled', '1');
+			uci.set('forkop', sec_name, 'action', 'connection');
+			uci.set('forkop', sec_name, 'sort_by_latency', '1');
+			uci.set('forkop', sec_name, 'outbound_detour_enabled', '0');
+			uci.set('forkop', sec_name, 'mixed_proxy_enabled', '0');
+			uci.set('forkop', sec_name, 'resolve_real_ip_for_routing', '0');
+			uci.set('forkop', sec_name, 'dashboard_filter_mode', 'disabled');
+			uci.set('forkop', sec_name, 'domain', join('\n', domains));
+
+			uci.foreach('forkop', 'section_interface', (s) => {
+				if (s.section == sec_name) uci.delete('forkop', s['.name']);
+			});
+
+			const sif = uci.add('forkop', 'section_interface');
+			uci.set('forkop', sif, 'section', sec_name);
+			uci.set('forkop', sif, 'name', target_iface);
+			uci.set('forkop', sif, 'domain_resolver_enabled', '0');
+			uci.set('forkop', sif, 'domain_resolver_dns_type', 'udp');
+			uci.set('forkop', sif, 'domain_resolver_dns_server', '8.8.8.8');
+			uci.commit('forkop');
+
+			uci.set('awg-warp-auto', 'main', 'forkop_section', sec_name);
+			uci.commit('awg-warp-auto');
+
+			command('/etc/init.d/forkop reload 2>/dev/null &');
+
+			return { ok: true, section: sec_name, interface: target_iface };
+		}
+	},
+
+	removeForkopSection: {
+		args: { section: "section" },
+		call: function(req) {
+			if (!(stat('/etc/config/forkop') != null && stat('/etc/init.d/forkop') != null))
+				return { ok: true, removed: null };
+
+			const uci = cursor();
+			uci.load('awg-warp-auto');
+			const sec = req.args?.section || uci.get('awg-warp-auto', 'main', 'forkop_section');
+			if (!sec) return { ok: true, removed: null };
+
+			uci.load('forkop');
+			if (uci.get('forkop', sec)) {
+				uci.delete('forkop', sec);
+			}
+			uci.foreach('forkop', 'section_interface', (s) => {
+				if (s.section == sec) uci.delete('forkop', s['.name']);
+			});
+			uci.commit('forkop');
+
+			uci.delete('awg-warp-auto', 'main', 'forkop_section');
+			uci.commit('awg-warp-auto');
+
+			command('/etc/init.d/forkop reload 2>/dev/null &');
+
+			return { ok: true, removed: sec };
 		}
 	}
 };

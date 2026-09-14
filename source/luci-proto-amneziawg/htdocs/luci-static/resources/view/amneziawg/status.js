@@ -71,6 +71,23 @@ var callGetWarpAutoOperation = rpc.declare({
 	params: [ 'operation_id' ]
 });
 
+var callGetForkopStatus = rpc.declare({
+	object: 'luci.amneziawg',
+	method: 'getForkopStatus'
+});
+
+var callConfigureForkopSection = rpc.declare({
+	object: 'luci.amneziawg',
+	method: 'configureForkopSection',
+	params: [ 'iface' ]
+});
+
+var callRemoveForkopSection = rpc.declare({
+	object: 'luci.amneziawg',
+	method: 'removeForkopSection',
+	params: [ 'section' ]
+});
+
 var DEFAULT_WARP_SOURCE_URL = 'https://warp-generation.github.io';
 
 function readTextFile(file) {
@@ -845,6 +862,55 @@ return view.extend({
 		}
 
 		dom.content(this.autoRuntimeNode, [ dashboard, activeConnCard ].filter(Boolean));
+
+		callGetForkopStatus().then(L.bind(function(fst) {
+			if (fst && fst.installed) {
+				var forkopSec = fst.managed_section;
+				var forkopNode = E('div', {
+					'class': 'cbi-section',
+					'style': 'background-color:var(--background-color-low); border:1px solid var(--border-color-medium); border-radius:4px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;'
+				}, [
+					E('div', [
+						E('strong', [ _('Forkop (sing-box): ') ]),
+						forkopSec
+							? E('span', { 'class': 'badge badge-success', 'style': 'background:#27ae60; color:#fff; padding:2px 8px; border-radius:3px; margin-left:6px; font-weight:600;' }, [ _('Секция "%s" активна').format(forkopSec) ])
+							: E('span', { 'class': 'badge badge-neutral', 'style': 'background:#7f8c8d; color:#fff; padding:2px 8px; border-radius:3px; margin-left:6px;' }, [ _('Не привязана') ]),
+						E('span', { 'style': 'font-size:12px; color:var(--text-color-medium); margin-left:10px;' }, [
+							forkopSec
+								? _('Домены YouTube направляются через AmneziaWG')
+								: _('Можно привязать AmneziaWG для обхода блокировок YouTube')
+						])
+					]),
+					E('div', [
+						forkopSec
+							? E('button', {
+								'class': 'btn cbi-button cbi-button-remove',
+								'click': L.bind(function() {
+									callRemoveForkopSection(forkopSec).then(L.bind(function() {
+										this.showNotification(_('Секция Forkop "%s" удалена.').format(forkopSec), 'info');
+										this.updateWarpAuto();
+									}, this));
+								}, this)
+							}, [ _('Удалить из Forkop') ])
+							: E('button', {
+								'class': 'btn cbi-button cbi-button-action',
+								'click': L.bind(function() {
+									var iface = (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
+									callConfigureForkopSection(iface).then(L.bind(function(res) {
+										if (res && res.ok) {
+											this.showNotification(_('Секция Forkop "%s" создана.').format(res.section), 'info');
+											this.updateWarpAuto();
+										}
+									}, this));
+								}, this)
+							}, [ _('Добавить в Forkop') ])
+					])
+				]);
+				if (this.autoRuntimeNode) {
+					this.autoRuntimeNode.appendChild(forkopNode);
+				}
+			}
+		}, this)).catch(function() {});
 	},
 
 	renderWarpAutoPool: function(state) {
@@ -1619,6 +1685,15 @@ return view.extend({
 						setTimeout(L.bind(function() {
 							ui.hideModal();
 							cleanup();
+							if (this.pendingForkopIntegration) {
+								this.pendingForkopIntegration = false;
+								var targetIface = (this.autoFields && this.autoFields.interface && this.autoFields.interface.value) || 'YTwarp';
+								callConfigureForkopSection(targetIface).then(L.bind(function(res) {
+									if (res && res.ok) {
+										this.showNotification(_('Секция Forkop "%s" успешно создана и применена!').format(res.section), 'info');
+									}
+								}, this)).catch(function() {});
+							}
 							this.showNotification(
 								_('Batch generation complete: %d READY, %d FAILED of %d requested.').format(ready, failed, requested),
 								ready > 0 ? 'info' : 'warning'
@@ -1640,7 +1715,55 @@ return view.extend({
 		}, this));
 	},
 
+	checkForkopQuickstartModal: function() {
+		return callGetForkopStatus().then(L.bind(function(st) {
+			if (!st || !st.installed || st.managed_section)
+				return false;
+
+			return new Promise(L.bind(function(resolve) {
+				var modal = [
+					E('p', { 'style': 'margin-bottom:12px; font-size:14px;' }, [
+						_('На вашем роутере установлен <strong>Forkop (sing-box)</strong>.'),
+						E('br'),
+						_('Хотите автоматически создать в Forkop секцию для маршрутизации доменов YouTube через создаваемый интерфейс AmneziaWG?')
+					]),
+					E('div', { 'class': 'alert-message info', 'style': 'margin-bottom:16px;' }, [
+						_('Секция будет настроена автоматически (по аналогии с YT / YT2), привязана к интерфейсу, и служба Forkop перезагрузится.')
+					]),
+					E('div', { 'class': 'right', 'style': 'display:flex; justify-content:flex-end; gap:10px; margin-top:20px;' }, [
+						E('button', {
+							'class': 'btn cbi-button',
+							'click': function() {
+								ui.hideModal();
+								resolve(false);
+							}
+						}, [ _('Только интерфейс (без Forkop)') ]),
+						E('button', {
+							'class': 'btn cbi-button cbi-button-action',
+							'click': function() {
+								ui.hideModal();
+								resolve(true);
+							}
+						}, [ _('Интерфейс + YouTube в Forkop') ])
+					])
+				];
+				ui.showModal(_('Интеграция с Forkop'), modal);
+			}, this));
+		}, this)).catch(function() { return false; });
+	},
+
 	runBatchFlow: function(count) {
+		var isQuickstart = (this.autoInterfaceState == 'missing');
+		if (isQuickstart) {
+			return this.checkForkopQuickstartModal().then(L.bind(function(enableForkop) {
+				if (enableForkop) this.pendingForkopIntegration = true;
+				return this._executeBatchFlow(count);
+			}, this));
+		}
+		return this._executeBatchFlow(count);
+	},
+
+	_executeBatchFlow: function(count) {
 		var action = 'batch';
 		count = count || 5;
 		this.setWarpAutoBusy(true);

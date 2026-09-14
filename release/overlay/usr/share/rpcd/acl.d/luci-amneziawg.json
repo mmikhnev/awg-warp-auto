@@ -6,10 +6,11 @@
 				"luci.amneziawg": [
 					"getAwgInstances",
 					"getWarpAutoStatus",
-					"getWarpAutoOperation"
+					"getWarpAutoOperation",
+					"getForkopStatus"
 				]
 			},
-			"uci": [ "ddns", "system", "network" ]
+			"uci": [ "ddns", "system", "network", "forkop", "awg-warp-auto" ]
 		},
 		"write": {
 			"ubus": {
@@ -24,7 +25,9 @@
 					"restartInterface",
 					"exportInterfaceConfig",
 					"saveWarpAutoSettings",
-					"warpAutoAction"
+					"warpAutoAction",
+					"configureForkopSection",
+					"removeForkopSection"
 				]
 			}
 		}

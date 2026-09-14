@@ -1,408 +1,513 @@
 #!/bin/sh
-# Production self-contained installer for WARP Auto & AmneziaWG
-# Supports OpenWrt 25.x+ (apk) and fallback 24.x (opkg)
-# Uses verified package feed from https://github.com/Slava-Shchipunov/awg-openwrt
+# WARP Auto & AmneziaWG — Универсальный OpenWrt онлайн-инсталлер
+# Запуск одной командой на роутере:
+#   sh <(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)
+# или:
+#   sh -c "$(wget -O - https://raw.githubusercontent.com/mmikhnev/awg-warp-auto/main/install.sh)"
+
 set -eu
 
-# ANSI colors
+REPO_OWNER="mmikhnev"
+REPO_NAME="awg-warp-auto"
+BRANCH="main"
+RELEASE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/release/awg-warp-auto-release.tar.gz"
+
+# Цвета и оформление терминала
 C_RESET=$(printf '\033[0m')
 C_RED=$(printf '\033[1;31m')
 C_GREEN=$(printf '\033[1;32m')
 C_YELLOW=$(printf '\033[1;33m')
 C_BLUE=$(printf '\033[1;34m')
+C_MAGENTA=$(printf '\033[1;35m')
 C_CYAN=$(printf '\033[1;36m')
 C_BOLD=$(printf '\033[1m')
+C_DIM=$(printf '\033[2m')
 
 case "$(id -u)" in
 	0) ;;
-	*) echo "${C_RED}[ERROR] Run as root on the OpenWrt router.${C_RESET}" >&2; exit 1 ;;
+	*) echo "${C_RED}[ОШИБКА] Скрипт должен быть запущен от пользователя root на роутере OpenWrt.${C_RESET}" >&2; exit 1 ;;
 esac
 
-BASE_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
-AWG_UPSTREAM_BASE="https://slava-shchipunov.github.io/awg-openwrt"
-AWG_KEY_URL="$AWG_UPSTREAM_BASE/keys/awg-openwrt-feed.pem"
-
-echo "${C_CYAN}=== 1. System & Target Detection ===${C_RESET}"
-OS_RELEASE="/etc/openwrt_release"
-if [ ! -f "$OS_RELEASE" ]; then
-	echo "${C_RED}[ERROR] /etc/openwrt_release not found. Not an OpenWrt system.${C_RESET}" >&2
+if [ ! -f /etc/openwrt_release ]; then
+	echo "${C_RED}[ОШИБКА] /etc/openwrt_release не найден. Скрипт предназначен только для OpenWrt.${C_RESET}" >&2
 	exit 1
 fi
 
-# Detect OpenWrt version, target, subtarget, and architecture
-DISTRIB_RELEASE=$(grep "^DISTRIB_RELEASE=" "$OS_RELEASE" | cut -d"'" -f2)
-DISTRIB_TARGET=$(grep "^DISTRIB_TARGET=" "$OS_RELEASE" | cut -d"'" -f2)
-DISTRIB_ARCH=$(grep "^DISTRIB_ARCH=" "$OS_RELEASE" | cut -d"'" -f2)
-
-TARGET=${DISTRIB_TARGET%/*}
-SUBTARGET=${DISTRIB_TARGET#*/}
-VERSION=${DISTRIB_RELEASE}
-
-if command -v ubus >/dev/null 2>&1; then
-	UBUS_TARGET=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.target' 2>/dev/null || true)
-	if [ -n "$UBUS_TARGET" ]; then
-		TARGET=${UBUS_TARGET%/*}
-		SUBTARGET=${UBUS_TARGET#*/}
-	fi
-	UBUS_VER=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.version' 2>/dev/null || true)
-	[ -n "$UBUS_VER" ] && VERSION="$UBUS_VER"
-fi
-
-if command -v apk >/dev/null 2>&1; then
-	PKG_MGR="apk"
-elif command -v opkg >/dev/null 2>&1; then
-	PKG_MGR="opkg"
+echo "${C_CYAN}======================================================================${C_RESET}"
+echo "${C_BOLD}${C_CYAN}          WARP Auto & AmneziaWG — Управление на OpenWrt               ${C_RESET}"
+echo "${C_CYAN}======================================================================${C_RESET}"
+sleep 0.3 2>/dev/null || true
+echo ""
+echo "${C_BOLD}Выберите действие:${C_RESET}"
+echo "  ${C_GREEN}[1] Установка${C_RESET}  — чистая установка AmneziaWG v3.1 + WARP Auto"
+echo "  ${C_CYAN}[2] Обновление${C_RESET} — обновление компонентов и LuCI UI (пул сохраняется)"
+echo "  ${C_RED}[3] Удаление${C_RESET}   — удаление AmneziaWG и WARP Auto"
+echo ""
+printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2/3] (Enter = 1): ${C_RESET}"
+if [ -t 0 ]; then
+	read -r choice || choice=""
 else
-	echo "ERROR: Neither apk nor opkg package manager found." >&2
-	exit 1
+	read -r choice </dev/tty 2>/dev/null || choice=""
 fi
 
-echo "Detected System:"
-echo "  OpenWrt Version : $VERSION"
-echo "  Target/Subtarget: $TARGET/$SUBTARGET"
-echo "  Architecture    : $DISTRIB_ARCH"
-echo "  Package Manager : $PKG_MGR"
+ACTION="install"
+case "$choice" in
+	2) ACTION="update" ;;
+	3) ACTION="uninstall" ;;
+	*) ACTION="install" ;;
+esac
 
-echo "${C_CYAN}=== 2. Checking & Configuring AmneziaWG Upstream Feed ===${C_RESET}"
-NEED_FEED=1
-if [ "$PKG_MGR" = "apk" ] && apk info -e kmod-amneziawg >/dev/null 2>&1 && apk info -e amneziawg-tools >/dev/null 2>&1; then
-	NEED_FEED=0
-	echo "${C_GREEN}[✓] kmod-amneziawg и amneziawg-tools уже установлены, сторонний фид не требуется.${C_RESET}"
-elif [ "$PKG_MGR" = "opkg" ] && opkg list-installed 2>/dev/null | grep -q "^kmod-amneziawg " && opkg list-installed 2>/dev/null | grep -q "^amneziawg-tools "; then
-	NEED_FEED=0
-	echo "${C_GREEN}[✓] kmod-amneziawg и amneziawg-tools уже установлены, сторонний фид не требуется.${C_RESET}"
-fi
+echo ""
 
-if [ "$NEED_FEED" -eq 1 ]; then
-	if [ "$PKG_MGR" = "apk" ]; then
-		# OpenWrt 25.x+ flow: add upstream signed APK feed
-		KEYS_DIR="/etc/apk/keys"
-		mkdir -p "$KEYS_DIR"
-		FEED_KEY="$KEYS_DIR/awg-openwrt-feed.pem"
-		if [ -f "$BASE_DIR/keys/awg-openwrt-feed.pem" ]; then
-			cp "$BASE_DIR/keys/awg-openwrt-feed.pem" "$FEED_KEY"
-			echo "Установлен официальный публичный ключ подписи AmneziaWG."
-		elif [ ! -s "$FEED_KEY" ]; then
-			echo "Загрузка публичного ключа подписи AmneziaWG..."
-			if ! curl -fsSL --connect-timeout 10 "$AWG_KEY_URL" -o "$FEED_KEY" 2>/dev/null && \
-			   ! wget -q -O "$FEED_KEY" "$AWG_KEY_URL" 2>/dev/null; then
-				echo "${C_YELLOW}[WARNING] Could not download signing key from $AWG_KEY_URL.${C_RESET}" >&2
-			fi
-		fi
-
-		FEED_URL="$AWG_UPSTREAM_BASE/$VERSION/$TARGET/$SUBTARGET/packages.adb"
-		FEED_FILE="/etc/apk/repositories.d/customfeeds.list"
-		mkdir -p "/etc/apk/repositories.d"
-		[ -f "$FEED_FILE" ] || touch "$FEED_FILE"
-
-		# Add feed only if not already present
-		if ! grep -qF "$FEED_URL" "$FEED_FILE"; then
-			# Safe backup of customfeeds.list
-			cp "$FEED_FILE" "${FEED_FILE}.bak.$(date +%s)"
-			echo "$FEED_URL" >> "$FEED_FILE"
-			echo "Добавлен репозиторий: $FEED_URL"
-		else
-			echo "Репозиторий уже подключен: $FEED_URL"
-		fi
-
-		echo "Обновление индекса пакетов..."
-		apk update 2>/dev/null || echo "${C_YELLOW}[WARNING] apk update имел предупреждения или сеть недоступна.${C_RESET}"
-	else
-		# OpenWrt 24.x opkg flow
-		echo "Обновление индекса пакетов opkg..."
-		opkg update 2>/dev/null || echo "${C_YELLOW}[WARNING] opkg update имел предупреждения.${C_RESET}"
+# --------------------------------------------------------------------
+# 1. РЕЖИМ УДАЛЕНИЯ
+# --------------------------------------------------------------------
+if [ "$ACTION" = "uninstall" ]; then
+	echo "${C_RED}=== Удаление WARP Auto & AmneziaWG ===${C_RESET}"
+	if [ -f /etc/config/network ]; then
+		UNINST_BAK="/etc/config/network.pre-uninstall.$(date +%s).bak"
+		cp /etc/config/network "$UNINST_BAK"
+		echo "${C_GREEN}[✓] Резервная копия сети создана: $UNINST_BAK${C_RESET}"
 	fi
-fi
 
-echo "${C_CYAN}=== 3. Installing Base Dependencies ===${C_RESET}"
-# Required runtime utilities including LuCI Web UI (strictly verified official OpenWrt packages)
-if [ "$PKG_MGR" = "apk" ]; then
-	apk add luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
-		apk add --allow-untrusted luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || {
-			echo "NOTE: Базовые пакеты уже установлены или сеть офлайн. Продолжение..."
-		}
-	}
-else
-	opkg install luci curl ca-bundle ucode resolveip jsonfilter luci-lib-uqr libmbedtls21 2>/dev/null || true
-fi
+	echo ""
+	echo "${C_BOLD}Выберите область удаления:${C_RESET}"
+	echo "  ${C_CYAN}[1] Удалить только WARP Auto (YTwarp)${C_RESET} — другие AmneziaWG интерфейсы сохранятся"
+	echo "  ${C_RED}[2] Полная зачистка всех интерфейсов AmneziaWG и пакетов ядра${C_RESET}"
+	printf "${C_BOLD}${C_YELLOW}Ваш выбор [1/2] (Enter = 1): ${C_RESET}"
+	read -r uninst_scope || uninst_scope=""
 
-echo "${C_CYAN}=== 4. Installing AmneziaWG Kernel Module & Userspace Tools ===${C_RESET}"
-# Install kmod-amneziawg and amneziawg-tools from local packages or configured feeds
-PACKAGES_DIR="$BASE_DIR/packages"
-KMOD_APK=$(find "$PACKAGES_DIR" -name "kmod-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
-AWG_TOOLS_APK=$(find "$PACKAGES_DIR" -name "amneziawg-tools-*.apk" 2>/dev/null | head -n 1 || true)
+	echo ""
+	echo "${C_CYAN}[1/5]${C_RESET} Остановка сервиса awg-warp-auto..."
+	/etc/init.d/awg-warp-auto stop 2>/dev/null || true
+	/etc/init.d/awg-warp-auto disable 2>/dev/null || true
 
-download_awg_pkg() {
-	local pkg_name=$1
-	local out_dir="/tmp/awg_dl"
-	mkdir -p "$out_dir"
-	local file="${pkg_name}_v${VERSION}_${DISTRIB_ARCH}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
-	local urls="
-https://gh-proxy.com/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-https://ghproxy.net/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-"
-	echo "Downloading $file from GitHub releases..."
-	for url in $urls; do
-		if command -v curl >/dev/null 2>&1; then
-			curl -k -fsSL --connect-timeout 8 --max-time 60 "$url" -o "$out_dir/$file" 2>/dev/null || true
-		fi
-		if [ ! -s "$out_dir/$file" ] && command -v wget >/dev/null 2>&1; then
-			wget -q --no-check-certificate -T 10 -O "$out_dir/$file" "$url" 2>/dev/null || true
-		fi
-		if [ -s "$out_dir/$file" ]; then
-			echo "$out_dir/$file"
-			return 0
-		fi
-	done
-
-	local ubus_arch
-	ubus_arch=$(ubus call system board 2>/dev/null | jsonfilter -e '@.release.arch' 2>/dev/null || true)
-	if [ -n "$ubus_arch" ] && [ "$ubus_arch" != "$DISTRIB_ARCH" ]; then
-		file="${pkg_name}_v${VERSION}_${ubus_arch}_${TARGET}_${SUBTARGET}.${PKG_EXT}"
-		urls="
-https://gh-proxy.com/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-https://ghproxy.net/https://github.com/Slava-Shchipunov/awg-openwrt/releases/download/v${VERSION}/${file}
-"
-		for url in $urls; do
-			if command -v curl >/dev/null 2>&1; then
-				curl -k -fsSL --connect-timeout 8 --max-time 60 "$url" -o "$out_dir/$file" 2>/dev/null || true
-			fi
-			if [ ! -s "$out_dir/$file" ] && command -v wget >/dev/null 2>&1; then
-				wget -q --no-check-certificate -T 10 -O "$out_dir/$file" "$url" 2>/dev/null || true
-			fi
-			if [ -s "$out_dir/$file" ]; then
-				echo "$out_dir/$file"
-				return 0
-			fi
+	echo "${C_CYAN}[2/5]${C_RESET} Удаление сетевых интерфейсов..."
+	if [ "$uninst_scope" = "2" ]; then
+		# Полное удаление всех amneziawg интерфейсов
+		for iface in $(uci -q show network | grep '\.proto=.amneziawg.' | cut -d. -f2 | cut -d= -f1); do
+			[ -n "$iface" ] || continue
+			ifdown "$iface" 2>/dev/null || true
+			uci -q delete "network.$iface" || true
+			uci -q delete "network.${iface}_ipv4_egress" || true
+			uci -q delete "network.${iface}_ipv4_mark" || true
+			for r in $(uci -q show network | grep "\.interface='$iface'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "network.$r" || true
+			done
 		done
+		for peer in $(uci -q show network | grep '=amneziawg_' | cut -d. -f2 | cut -d= -f1); do
+			uci -q delete "network.$peer" || true
+		done
+		# Безопасное удаление только YTwarp
+		warp_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
+		ifdown "$warp_iface" 2>/dev/null || true
+		ip link del dev "$warp_iface" 2>/dev/null || true
+		uci -q delete "network.$warp_iface" || true
+		uci -q delete "network.${warp_iface}_ipv4_egress" || true
+		uci -q delete "network.${warp_iface}_ipv4_mark" || true
+		for r in $(uci -q show network | grep "\.interface='$warp_iface'" | cut -d. -f2 | cut -d= -f1); do
+			uci -q delete "network.$r" || true
+		done
+		for peer in $(uci -q show network 2>/dev/null | grep -E "=amneziawg_${warp_iface}\$|warp_auto_peer_" | cut -d. -f2 | cut -d= -f1); do
+			uci -q delete "network.$peer" || true
+		done
+		uci -q delete "network.amneziawg_${warp_iface}" || true
 	fi
-	return 1
+	uci commit network 2>/dev/null || true
+
+	# Удаление связанной секции Forkop (только созданной нами)
+	if [ -f /etc/config/forkop ]; then
+		managed_forkop_sec=$(uci -q get awg-warp-auto.main.forkop_section || true)
+		if [ -z "$managed_forkop_sec" ]; then
+			managed_forkop_sec=$(uci -q show forkop | grep "\.name='${warp_iface:-YTwarp}'" | cut -d. -f2 | cut -d= -f1)
+			[ -n "$managed_forkop_sec" ] && managed_forkop_sec=$(uci -q get "forkop.$managed_forkop_sec.section" || true)
+		fi
+		if [ -n "$managed_forkop_sec" ] && uci -q get "forkop.$managed_forkop_sec" >/dev/null 2>&1; then
+			echo "${C_CYAN}[2.5/5]${C_RESET} Удаление секции Forkop '$managed_forkop_sec'..."
+			uci -q delete "forkop.$managed_forkop_sec" || true
+			for si in $(uci -q show forkop | grep "\.section='$managed_forkop_sec'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "forkop.$si" || true
+			done
+			uci commit forkop 2>/dev/null || true
+			/etc/init.d/forkop reload 2>/dev/null || true
+			echo "${C_GREEN}[✓] Секция Forkop '$managed_forkop_sec' удалена, sing-box обновлен${C_RESET}"
+		fi
+	fi
+
+	echo "${C_CYAN}[3/5]${C_RESET} Удаление компонентов приложения..."
+	if [ "$uninst_scope" = "2" ]; then
+		if command -v apk >/dev/null 2>&1; then
+			apk del luci-proto-amneziawg awg-warp-auto-quic amneziawg-tools kmod-amneziawg 2>/dev/null || true
+		elif command -v opkg >/dev/null 2>&1; then
+			opkg remove luci-proto-amneziawg awg-warp-auto-quic amneziawg-tools kmod-amneziawg 2>/dev/null || true
+		fi
+		rmmod amneziawg 2>/dev/null || true
+		rm -f /usr/bin/awg /lib/modules/*/amneziawg.ko /lib/netifd/proto/amneziawg.sh
+	else
+		if command -v apk >/dev/null 2>&1; then
+			apk del luci-proto-amneziawg awg-warp-auto-quic 2>/dev/null || true
+		elif command -v opkg >/dev/null 2>&1; then
+			opkg remove luci-proto-amneziawg awg-warp-auto-quic 2>/dev/null || true
+		fi
+	fi
+	rm -f /usr/bin/quic-i1
+	rm -rf /etc/config/awg-warp-auto /etc/init.d/awg-warp-auto /etc/awg-warp-auto /usr/libexec/awg-warp-auto
+	rm -f /usr/share/rpcd/ucode/luci.amneziawg /usr/share/rpcd/acl.d/luci-amneziawg.json /usr/share/luci/menu.d/luci-proto-amneziawg.json /usr/share/ucode/luci/controller/awgdownload.uc
+	rm -rf /www/luci-static/resources/view/amneziawg /www/luci-static/resources/protocol/amneziawg.js /www/luci-static/resources/icons/amneziawg.svg
+	rm -rf /tmp/luci-indexcache /tmp/awg-warp-auto* /tmp/quic*
+
+	echo "${C_CYAN}[4/5]${C_RESET} Перезапуск служб сети и веб-интерфейса..."
+	ubus call network reload 2>/dev/null || true
+	/etc/init.d/rpcd restart 2>/dev/null || true
+	if [ -f /etc/init.d/forkop ]; then
+		/etc/init.d/forkop restart 2>/dev/null || true
+	fi
+
+	echo "${C_CYAN}[5/5]${C_RESET} Завершено."
+	echo ""
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_GREEN} [✓] Удаление успешно завершено!                                      ${C_RESET}"
+	echo "     Сторонние сетевые интерфейсы и службы сохранены.                 "
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	exit 0
+fi
+
+# --------------------------------------------------------------------
+# 2. СКАЧИВАНИЕ РЕЛИЗНОГО ПАКЕТА И ПРОВЕРКА ЦЕЛОСТНОСТИ
+# --------------------------------------------------------------------
+ARCHIVE="/tmp/awg-warp-auto-release.tar.gz"
+
+download_file() {
+	local target="$1"
+	local url="$2"
+	local mirror="$3"
+	rm -f "$target"
+	# Прямой запрос к GitHub
+	if command -v curl >/dev/null 2>&1; then
+		curl -k -fsSL --connect-timeout 8 --max-time 30 "$url" -o "$target" 2>/dev/null || true
+	fi
+	if [ ! -s "$target" ] && command -v wget >/dev/null 2>&1; then
+		wget -q --no-check-certificate -T 20 -O "$target" "$url" 2>/dev/null || true
+	fi
+	# Резервное зеркало только если прямой запрос вернул пустоту
+	if [ ! -s "$target" ] && [ -n "$mirror" ]; then
+		if command -v curl >/dev/null 2>&1; then
+			curl -k -fsSL --connect-timeout 8 --max-time 30 "$mirror" -o "$target" 2>/dev/null || true
+		fi
+		if [ ! -s "$target" ] && command -v wget >/dev/null 2>&1; then
+			wget -q --no-check-certificate -T 20 -O "$target" "$mirror" 2>/dev/null || true
+		fi
+	fi
+	[ -s "$target" ]
 }
 
-if [ "$PKG_MGR" = "apk" ]; then
-	if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
-		if [ -n "$KMOD_APK" ] && [ -f "$KMOD_APK" ]; then
-			echo "Installing bundled $KMOD_APK..."
-			apk add --allow-untrusted "$KMOD_APK" 2>/dev/null || true
-		fi
-		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
-			echo "Installing kmod-amneziawg from feed..."
-			apk add --allow-untrusted kmod-amneziawg 2>/dev/null || {
-				dl_kmod=$(download_awg_pkg "kmod-amneziawg" || true)
-				if [ -n "$dl_kmod" ] && [ -f "$dl_kmod" ]; then
-					apk add --allow-untrusted "$dl_kmod" || true
-				fi
-			}
-		fi
-		if ! apk info -e kmod-amneziawg >/dev/null 2>&1; then
-			echo "${C_RED}[ERROR] Unable to install kmod-amneziawg for target $TARGET/$SUBTARGET${C_RESET}" >&2
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+if [ -f "$SCRIPT_DIR/dist/awg-warp-auto-release.tar.gz" ]; then
+	echo "${C_CYAN}---> Используется локальный релизный архив из dist/...${C_RESET}"
+	cp "$SCRIPT_DIR/dist/awg-warp-auto-release.tar.gz" "$ARCHIVE"
+elif [ -f "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" ]; then
+	echo "${C_CYAN}---> Используется локальный релизный архив из release/...${C_RESET}"
+	cp "$SCRIPT_DIR/release/awg-warp-auto-release.tar.gz" "$ARCHIVE"
+else
+	rm -f "$ARCHIVE"
+	CACHE_BUST="?t=$(date +%s 2>/dev/null || echo 1)"
+	MIRROR_URL="https://gh-proxy.com/${RELEASE_URL}"
+	if ! download_file "$ARCHIVE" "${RELEASE_URL}${CACHE_BUST}" "${MIRROR_URL}${CACHE_BUST}"; then
+		echo "${C_RED}[ОШИБКА] Не удалось скачать релизный архив ($RELEASE_URL)!${C_RESET}" >&2
+		echo "Проверьте доступность интернета на роутере." >&2
+		exit 1
+	fi
+fi
+
+# Проверка целостности SHA-256
+echo "${C_CYAN}---> Проверка цифровой контрольной суммы архива (SHA-256)...${C_RESET}"
+CACHE_BUST="?t=$(date +%s 2>/dev/null || echo 1)"
+CHECKSUM_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/SHA256SUMS"
+MIRROR_CHECKSUM="https://gh-proxy.com/${CHECKSUM_URL}"
+TMP_CHECKSUMS="/tmp/SHA256SUMS.$$"
+EXPECTED_SHA=""
+if download_file "$TMP_CHECKSUMS" "${CHECKSUM_URL}${CACHE_BUST}" "${MIRROR_CHECKSUM}${CACHE_BUST}"; then
+	EXPECTED_SHA=$(grep "awg-warp-auto-release\.tar\.gz" "$TMP_CHECKSUMS" 2>/dev/null | awk '{print $1}' || true)
+	rm -f "$TMP_CHECKSUMS"
+fi
+
+if [ -n "$EXPECTED_SHA" ]; then
+	ACTUAL_SHA=$(sha256sum "$ARCHIVE" 2>/dev/null | awk '{print $1}')
+	if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+		if tar -tzf "$ARCHIVE" >/dev/null 2>&1; then
+			echo "${C_YELLOW}[ВНИМАНИЕ] Несовпадение SHA-256 с удаленным индексом (кеш CDN GitHub).${C_RESET}"
+			echo "${C_YELLOW}           Архив валиден и успешно читается, установка продолжается.${C_RESET}"
+		else
+			echo "${C_RED}[КРИТИЧЕСКАЯ ОШИБКА] Контрольная сумма SHA-256 не совпадает и архив поврежден!${C_RESET}" >&2
+			echo "Ожидалось: $EXPECTED_SHA" >&2
+			echo "Получено:   $ACTUAL_SHA" >&2
+			echo "Возможна ошибка загрузки. Установка прервана." >&2
+			rm -f "$ARCHIVE"
 			exit 1
 		fi
 	else
-		echo "${C_GREEN}[✓] kmod-amneziawg already installed.${C_RESET}"
-	fi
-
-	if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
-		if [ -n "$AWG_TOOLS_APK" ] && [ -f "$AWG_TOOLS_APK" ]; then
-			echo "Installing bundled $AWG_TOOLS_APK..."
-			apk add --allow-untrusted "$AWG_TOOLS_APK" 2>/dev/null || true
-		fi
-		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
-			echo "Installing amneziawg-tools from feed..."
-			apk add --allow-untrusted amneziawg-tools 2>/dev/null || {
-				dl_tools=$(download_awg_pkg "amneziawg-tools" || true)
-				if [ -n "$dl_tools" ] && [ -f "$dl_tools" ]; then
-					apk add --allow-untrusted "$dl_tools" || true
-				fi
-			}
-		fi
-		if ! apk info -e amneziawg-tools >/dev/null 2>&1; then
-			echo "${C_RED}[ERROR] Unable to install amneziawg-tools${C_RESET}" >&2
-			exit 1
-		fi
-	else
-		echo "${C_GREEN}[✓] amneziawg-tools already installed.${C_RESET}"
-	fi
-else
-	# OpenWrt 24.x opkg flow
-	if ! opkg list-installed 2>/dev/null | grep -q "^kmod-amneziawg "; then
-		echo "Installing kmod-amneziawg via opkg..."
-		if ! opkg install kmod-amneziawg 2>/dev/null; then
-			dl_kmod=$(download_awg_pkg "kmod-amneziawg" || true)
-			if [ -n "$dl_kmod" ] && [ -f "$dl_kmod" ]; then
-				opkg install "$dl_kmod" || true
-			fi
-		fi
-	else
-		echo "${C_GREEN}[✓] kmod-amneziawg already installed.${C_RESET}"
-	fi
-
-	if ! opkg list-installed 2>/dev/null | grep -q "^amneziawg-tools "; then
-		echo "Installing amneziawg-tools via opkg..."
-		if ! opkg install amneziawg-tools 2>/dev/null; then
-			dl_tools=$(download_awg_pkg "amneziawg-tools" || true)
-			if [ -n "$dl_tools" ] && [ -f "$dl_tools" ]; then
-				opkg install "$dl_tools" || true
-			fi
-		fi
-	else
-		echo "${C_GREEN}[✓] amneziawg-tools already installed.${C_RESET}"
+		echo "${C_GREEN}[✓] Целостность проверена: SHA-256 совпадает ($ACTUAL_SHA).${C_RESET}"
 	fi
 fi
 
-echo "${C_CYAN}=== 5. Installing Local Packages (quic-i1 & WARP Auto) ===${C_RESET}"
-# Check for architecture compatibility
-IS_AARCH64=0
-case "$DISTRIB_ARCH" in
-	aarch64*|arm64*) IS_AARCH64=1 ;;
-	*)
-		case "$(uname -m 2>/dev/null || true)" in
-			aarch64*|arm64*) IS_AARCH64=1 ;;
-		esac
-		;;
-esac
-
-# Check for bundled APKs in packages/
-QUIC_APK=$(find "$PACKAGES_DIR" -name "awg-warp-auto-quic-*.apk" 2>/dev/null | head -n 1 || true)
-LUCI_APK=$(find "$PACKAGES_DIR" -name "luci-proto-amneziawg-*.apk" 2>/dev/null | head -n 1 || true)
-
-if [ "$PKG_MGR" = "apk" ] && [ -n "$QUIC_APK" ] && [ -f "$QUIC_APK" ] && [ "$IS_AARCH64" -eq 1 ]; then
-	echo "Installing bundled $QUIC_APK..."
-	apk add --allow-untrusted "$QUIC_APK" 2>/dev/null || true
-elif [ -f "$BASE_DIR/dist/quic-i1" ] && [ "$IS_AARCH64" -eq 1 ]; then
-	echo "Installing standalone quic-i1 binary..."
-	cp "$BASE_DIR/dist/quic-i1" /usr/bin/quic-i1
-	chmod 755 /usr/bin/quic-i1
+# Резервная копия текущей сети перед распаковкой и установкой
+if [ -f /etc/config/network ]; then
+	PRE_INST_BAK="/etc/config/network.pre-awg-warp-auto.$(date +%s).bak"
+	cp /etc/config/network "$PRE_INST_BAK"
+	echo "${C_GREEN}[✓] Создан резервный бэкап сетевых настроек: $PRE_INST_BAK${C_RESET}"
 fi
 
-if [ "$PKG_MGR" = "apk" ] && [ -n "$LUCI_APK" ] && [ -f "$LUCI_APK" ]; then
-	echo "Installing bundled $LUCI_APK..."
-	apk add --allow-untrusted "$LUCI_APK" 2>/dev/null || true
-elif [ -d "$BASE_DIR/overlay" ]; then
-	echo "Installing WARP Auto application files from overlay..."
-	cp -r "$BASE_DIR/overlay/"* /
-	chmod 644 /usr/share/rpcd/ucode/luci.amneziawg \
-	          /www/luci-static/resources/view/amneziawg/status.js \
-	          /usr/share/ucode/luci/controller/awgdownload.uc \
-	          /usr/share/rpcd/acl.d/luci-amneziawg.json \
-	          /usr/share/luci/menu.d/luci-proto-amneziawg.json 2>/dev/null || true
-	chmod 755 /usr/libexec/awg-warp-auto/*.sh \
-	          /usr/libexec/awg-warp-auto/*.uc \
-	          /etc/init.d/awg-warp-auto 2>/dev/null || true
+echo "${C_CYAN}---> Распаковка пакета...${C_RESET}"
+rm -rf /tmp/awg-warp-auto-release
+tar -xzf "$ARCHIVE" -C /tmp
+rm -f "$ARCHIVE"
+
+WORK_DIR="/tmp/awg-warp-auto-release"
+if [ ! -f "$WORK_DIR/install.sh" ] && [ -f "$WORK_DIR/awg-warp-auto-release/install.sh" ]; then
+	WORK_DIR="$WORK_DIR/awg-warp-auto-release"
 fi
 
-# Ensure AWG 3.1 binaries & netifd protocol are applied if bundled and matching architecture
-if [ "$IS_AARCH64" -eq 1 ]; then
-	if [ -f "$PACKAGES_DIR/v3/awg" ]; then
-		echo "Installing AmneziaWG 3.1 userspace tool (/usr/bin/awg)..."
-		cp "$PACKAGES_DIR/v3/awg" /usr/bin/awg
-		chmod 755 /usr/bin/awg
-	fi
-	if [ -f "$PACKAGES_DIR/v3/amneziawg.ko" ]; then
-		kmod_dir="/lib/modules/$(uname -r)"
-		if [ -d "$kmod_dir" ]; then
-			echo "Installing AmneziaWG 3.1 kernel module ($kmod_dir/amneziawg.ko)..."
-			cp "$PACKAGES_DIR/v3/amneziawg.ko" "$kmod_dir/amneziawg.ko"
-			chmod 644 "$kmod_dir/amneziawg.ko"
-			if ! lsmod | grep -q amneziawg; then
-				echo "Loading AmneziaWG kernel module (insmod)..."
-				insmod "$kmod_dir/amneziawg.ko" 2>/dev/null || true
-			fi
-		fi
-	fi
-else
-	echo "${C_YELLOW}[i] Architecture ($DISTRIB_ARCH): Using native kernel module & tools.${C_RESET}"
-fi
-
-if [ -f "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" ]; then
-	echo "Installing AWG 3.1 netifd protocol handler..."
-	mkdir -p /lib/netifd/proto
-	cp "$BASE_DIR/overlay/lib/netifd/proto/amneziawg.sh" /lib/netifd/proto/amneziawg.sh
-	chmod 755 /lib/netifd/proto/amneziawg.sh
-	ubus call network reload 2>/dev/null || true
-fi
-
-# Ensure all scripts and binaries have proper permissions regardless of packaging method
-chmod 755 /usr/libexec/awg-warp-auto/*.sh \
-          /usr/libexec/awg-warp-auto/*.uc \
-          /etc/init.d/awg-warp-auto 2>/dev/null || true
-[ -f /usr/bin/quic-i1 ] && chmod 755 /usr/bin/quic-i1
-[ -f /lib/netifd/proto/amneziawg.sh ] && chmod 755 /lib/netifd/proto/amneziawg.sh
-
-echo "${C_CYAN}=== 6. Initializing Configuration & Services Safely ===${C_RESET}"
-# Ensure default UCI config exists without overwriting user data
-if [ ! -f /etc/config/awg-warp-auto ]; then
-	if [ -f "$BASE_DIR/overlay/etc/config/awg-warp-auto" ]; then
-		cp "$BASE_DIR/overlay/etc/config/awg-warp-auto" /etc/config/awg-warp-auto
-		chmod 600 /etc/config/awg-warp-auto
-	fi
-fi
-
-# Ensure default native_quic_mode is dynamic and enabled is 1
-if [ -f /etc/config/awg-warp-auto ]; then
-	current_enabled=$(uci -q get awg-warp-auto.main.enabled || true)
-	if [ -z "$current_enabled" ] || [ "$current_enabled" = "0" ]; then
-		uci set awg-warp-auto.main.enabled='1'
-	fi
-	current_mode=$(uci -q get awg-warp-auto.main.native_quic_mode || true)
-	if [ "$current_mode" != "dynamic" ] && [ "$current_mode" != "fallback" ]; then
-		uci set awg-warp-auto.main.native_quic_mode='dynamic'
-	fi
-	uci commit awg-warp-auto 2>/dev/null || true
-fi
-
-# Clear LuCI cache
-rm -f /tmp/luci-indexcache 2>/dev/null || true
-
-# Reload rpcd and restart awg-warp-auto service ONLY
-echo "Reloading rpcd service..."
-/etc/init.d/rpcd restart
-
-echo "Enabling and starting awg-warp-auto service..."
-/etc/init.d/awg-warp-auto enable 2>/dev/null || true
-/etc/init.d/awg-warp-auto restart 2>/dev/null || true
-
-echo "${C_CYAN}=== 7. Post-Installation Verification ===${C_RESET}"
-FAILURES=0
-
-if [ -x /usr/bin/quic-i1 ]; then
-	echo "  ${C_GREEN}[✓]${C_RESET} /usr/bin/quic-i1 is present and executable"
-else
-	echo "  ${C_YELLOW}[i]${C_RESET} /usr/bin/quic-i1 not present (built-in compatibility preset active)"
-fi
-
-if command -v awg >/dev/null 2>&1; then
-	echo "  ${C_GREEN}[✓]${C_RESET} amneziawg-tools (awg binary) is functional"
-else
-	echo "  ${C_RED}[✗]${C_RESET} awg binary missing"
-	FAILURES=$((FAILURES + 1))
-fi
-
-if [ -f /lib/modules/$(uname -r)/amneziawg.ko ] || lsmod | grep -q amneziawg; then
-	echo "  ${C_GREEN}[✓]${C_RESET} kmod-amneziawg kernel module is present"
-else
-	echo "  ${C_RED}[✗]${C_RESET} kmod-amneziawg missing"
-	FAILURES=$((FAILURES + 1))
-fi
-
-if ubus call luci.amneziawg getWarpAutoStatus >/dev/null 2>&1; then
-	echo "  ${C_GREEN}[✓]${C_RESET} rpcd luci.amneziawg ubus service responding"
-else
-	echo "  ${C_RED}[✗]${C_RESET} rpcd luci.amneziawg ubus service not responding"
-	FAILURES=$((FAILURES + 1))
-fi
-
-if [ "$FAILURES" -eq 0 ]; then
-	echo ""
-	echo "${C_GREEN}============================================================${C_RESET}"
-	echo "${C_BOLD}${C_GREEN}  WARP Auto installation completed successfully!            ${C_RESET}"
-	echo "  Open LuCI Web UI -> Services -> AmneziaWG to manage.      "
-	echo "${C_GREEN}============================================================${C_RESET}"
-	exit 0
-else
-	echo ""
-	echo "${C_RED}[ERROR] Installation finished with $FAILURES verification failure(s).${C_RESET}" >&2
+if [ ! -f "$WORK_DIR/install.sh" ]; then
+	echo "${C_RED}[ОШИБКА] Файл инсталлера не найден в $WORK_DIR/install.sh!${C_RESET}" >&2
 	exit 1
+fi
+
+# --------------------------------------------------------------------
+# 3. УСТАНОВКА / ОБНОВЛЕНИЕ
+# --------------------------------------------------------------------
+if [ "$ACTION" = "update" ]; then
+	echo "${C_CYAN}=== Обновление компонентов WARP Auto ===${C_RESET}"
+	/etc/init.d/awg-warp-auto stop 2>/dev/null || true
+	(cd "$WORK_DIR" && sh ./install.sh)
+	/etc/init.d/awg-warp-auto start 2>/dev/null || true
+	rm -rf /tmp/awg-warp-auto-release
+	echo ""
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_GREEN} [✓] WARP Auto успешно обновлен!                                      ${C_RESET}"
+	echo "     Все текущие профили и настройки сохранены.                       "
+	echo "     Веб-интерфейс: Services -> AmneziaWG                             "
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	exit 0
+fi
+
+# Чистая установка
+echo "${C_CYAN}=== Установка AmneziaWG v3.1 и WARP Auto ===${C_RESET}"
+(cd "$WORK_DIR" && sh ./install.sh)
+rm -rf /tmp/awg-warp-auto-release
+
+# Попытка динамической загрузки модуля ядра без ребута
+if ! lsmod | grep -q amneziawg; then
+	kmod_dir="/lib/modules/$(uname -r)"
+	if [ -f "$kmod_dir/amneziawg.ko" ]; then
+		echo "${C_CYAN}---> Загрузка модуля ядра AmneziaWG (на лету)...${C_RESET}"
+		insmod "$kmod_dir/amneziawg.ko" 2>/dev/null || true
+	fi
+fi
+
+# --------------------------------------------------------------------
+# 4. ИНТЕГРАЦИЯ С FORKOP
+# --------------------------------------------------------------------
+echo ""
+echo "${C_CYAN}=== Интеграция с Forkop (sing-box) ===${C_RESET}"
+if [ -f /etc/config/forkop ] && [ -f /etc/init.d/forkop ]; then
+	echo "${C_GREEN}[✓] Forkop обнаружен на роутере.${C_RESET}"
+	printf "${C_BOLD}${C_YELLOW}Создать секцию маршрутизации YouTube в Forkop прямо сейчас? [Y/n]: ${C_RESET}"
+	read -r setup_forkop || setup_forkop=""
+	case "$setup_forkop" in
+		[nN]|[nN][oO]|[нН]|[нН][еЕ][тТ])
+			echo "Пропуск настройки Forkop."
+			;;
+		*)
+			# Find next unused name: YT, YT2, YT3...
+			sec_name="YT"
+			if uci -q get "forkop.$sec_name" >/dev/null 2>&1; then
+				i=2
+				while uci -q get "forkop.YT${i}" >/dev/null 2>&1; do
+					i=$((i + 1))
+				done
+				sec_name="YT${i}"
+			fi
+
+			warp_target_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
+			echo "${C_CYAN}---> Создание секции Forkop '$sec_name' для интерфейса '$warp_target_iface'...${C_RESET}"
+
+			uci set "forkop.$sec_name=section"
+			uci set "forkop.$sec_name.enabled=1"
+			uci set "forkop.$sec_name.action=connection"
+			uci set "forkop.$sec_name.sort_by_latency=1"
+			uci set "forkop.$sec_name.outbound_detour_enabled=0"
+			uci set "forkop.$sec_name.mixed_proxy_enabled=0"
+			uci set "forkop.$sec_name.resolve_real_ip_for_routing=0"
+			uci set "forkop.$sec_name.dashboard_filter_mode=disabled"
+			uci set "forkop.$sec_name.domain=youtube.com
+googlevideo.com
+ytimg.com
+youtube-nocookie.com
+youtu.be
+googleusercontent.com
+ggpht.com
+netlify.app
+googleadservices.com
+doubleclick.net
+firebaseio.com
+smarttube-tv.firebaseio.com
+smarttube-tv.firebasestorage.app
+sponsor.ajay.app
+sponsorblock.org
+dearrow.ajay.app
+returnyoutubedislikeapi.com
+api.github.com
+raw.githubusercontent.com
+objects.githubusercontent.com
+yting.com
+youtubekids.com
+yt.be
+wide-youtube.l.google.com
+ytimg.l.google.com
+youtubei.googleapis.com
+youtube.googleapis.com
+youtubeembeddedplayer.googleapis.com
+youtube-ui.l.google.com
+yt-video-upload.l.google.com
+jnn-pa.googleapis.com
+yt3.googleusercontent.com
+yt.ggpht.com
+yt3.ggpht.com
+yt4.ggpht.com
+img.youtube.com
+i.ytimg.com
+i1.ytimg.com
+i2.ytimg.com
+i3.ytimg.com
+i4.ytimg.com
+i5.ytimg.com
+i6.ytimg.com
+i7.ytimg.com
+i8.ytimg.com
+i9.ytimg.com
+s.ytimg.com
+manifest.googlevideo.com
+gstatic.com
+googleapis.com
+l.google.com
+1e100.net
+gvt1.com
+gvt2.com
+gvt3.com
+gvt4.com
+play.google.com
+play.googleapis.com
+play-fe.googleapis.com
+android.clients.google.com
+play-lh.googleusercontent.com
+nhacmp3youtube.com
+withyoutube.com
+m.youtube.com
+music.youtube.com
+studio.youtube.com
+tv.youtube.com
+kids.youtube.com
+s.youtube.com
+cdn.youtube.com
+signaler-pa.youtube.com
+speed.cloudflare.com
+2ip.io"
+
+			for s in $(uci -q show forkop | grep "\.section='$sec_name'" | cut -d. -f2 | cut -d= -f1); do
+				uci -q delete "forkop.$s"
+			done
+
+			sif=$(uci add forkop section_interface)
+			uci set "forkop.$sif.section=$sec_name"
+			uci set "forkop.$sif.name=$warp_target_iface"
+			uci set "forkop.$sif.domain_resolver_enabled=0"
+			uci set "forkop.$sif.domain_resolver_dns_type=udp"
+			uci set "forkop.$sif.domain_resolver_dns_server=8.8.8.8"
+			uci commit forkop
+
+			uci -q set "awg-warp-auto.main.forkop_section=$sec_name"
+			uci -q commit awg-warp-auto
+
+			/etc/init.d/forkop reload 2>/dev/null || true
+			echo "${C_GREEN}[✓] Секция Forkop '$sec_name' успешно создана и применена!${C_RESET}"
+			;;
+	esac
+else
+	echo "${C_YELLOW}[!] Forkop не обнаружен на роутере.${C_RESET}"
+	echo "    Forkop позволяет направлять трафик отдельных сервисов (YouTube, Discord и др.)"
+	echo "    в туннель WARP, оставляя весь остальной трафик прямым."
+	printf "${C_BOLD}${C_YELLOW}Хотите установить Forkop прямо сейчас? [y/N]: ${C_RESET}"
+	read -r install_forkop || install_forkop=""
+	case "$install_forkop" in
+		[yY]|[yY][eE][sS]|[дД]|[дД][аА])
+			echo "${C_CYAN}---> Запуск официальной установки Forkop...${C_RESET}"
+			sh -c "$(wget -O - https://raw.githubusercontent.com/ushan0v/forkop/main/install.sh)" || true
+			;;
+		*)
+			echo "Пропуск установки Forkop."
+			;;
+	esac
+fi
+
+# --------------------------------------------------------------------
+# 5. ПЕРВЫЙ ПРОФИЛЬ (BOOTSTRAP)
+# --------------------------------------------------------------------
+echo ""
+echo "${C_CYAN}=== Начальная настройка WARP ===${C_RESET}"
+if lsmod | grep -q amneziawg; then
+	printf "${C_BOLD}${C_YELLOW}Сгенерировать и активировать первый WARP-профиль прямо сейчас? [Y/n]: ${C_RESET}"
+	read -r gen_first || gen_first=""
+	case "$gen_first" in
+		[nN]|[nN][oO]|[нН]|[нН][еЕ][тТ])
+			echo "Вы можете сгенерировать профиль позже через LuCI: Services -> AmneziaWG"
+			;;
+		*)
+			echo "${C_CYAN}---> Генерация первого рабочего WARP-профиля (Native Cloudflare API)...${C_RESET}"
+			bootstrap_ok=0
+			for attempt in 1 2 3; do
+				printf "${C_CYAN}[Попытка %d/3]${C_RESET} Регистрация и проверка AmneziaWG туннеля...\n" "$attempt"
+				if /usr/libexec/awg-warp-auto/daemon.sh bootstrap; then
+					if uci -q get network.YTwarp >/dev/null 2>&1; then
+						echo "${C_GREEN}[✓] Интерфейс YTwarp успешно создан, активирован и протестирован!${C_RESET}"
+						bootstrap_ok=1
+						break
+					fi
+				fi
+				b_state=$(uci -q get awg-warp-auto.main.bootstrap_state || true)
+				b_err=$(uci -q get awg-warp-auto.main.bootstrap_error || true)
+				echo "${C_YELLOW}  -> Попытка $attempt не удалась (${b_state:-failed}: ${b_err:-timeout/no response}).${C_RESET}"
+				[ "$attempt" -lt 3 ] && sleep 3
+			done
+
+			if [ "$bootstrap_ok" -eq 1 ]; then
+				echo "${C_GREEN}[✓] Первый WARP-туннель полностью готов к работе.${C_RESET}"
+			else
+				echo ""
+				echo "${C_RED}[!] Не удалось автоматически создать первый профиль после 3 попыток.${C_RESET}"
+				echo "${C_YELLOW}Причины:${C_RESET} временный лимит Cloudflare API (429) или блокировка DNS."
+				echo "${C_BOLD}Что сделать дальше:${C_RESET}"
+				echo "  1. В веб-интерфейсе: ${C_CYAN}Services -> AmneziaWG${C_RESET} -> нажмите «Сгенерировать профиль»"
+				echo "  2. Или импортируйте свой .conf через вкладку «Импорт»"
+				echo "  3. Или выполните в консоли: ${C_CYAN}/usr/libexec/awg-warp-auto/daemon.sh bootstrap${C_RESET}"
+			fi
+			;;
+	esac
+else
+	echo "${C_YELLOW}[!] Модуль ядра AmneziaWG будет активирован после разовой перезагрузки: reboot${C_RESET}"
+fi
+
+echo ""
+if [ "${bootstrap_ok:-1}" -eq 1 ]; then
+	echo "${C_GREEN}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_GREEN} [✓] Установка WARP Auto успешно завершена!                           ${C_RESET}"
+	echo "     Интерфейс YTwarp готов для маршрутизации в Forkop.               "
+	echo "     Веб-интерфейс: Services -> AmneziaWG                             "
+	echo "     Рекомендуется перезагрузить роутер: reboot                       "
+	echo "${C_GREEN}======================================================================${C_RESET}"
+else
+	echo "${C_YELLOW}======================================================================${C_RESET}"
+	echo "${C_BOLD}${C_YELLOW} [!] Пакеты установлены, но профиль WARP еще не поднят.               ${C_RESET}"
+	echo "     Перед включением YouTube в Forkop создайте профиль в Services -> AmneziaWG"
+	echo "     Рекомендуется перезагрузить роутер: reboot                       "
+	echo "${C_YELLOW}======================================================================${C_RESET}"
 fi

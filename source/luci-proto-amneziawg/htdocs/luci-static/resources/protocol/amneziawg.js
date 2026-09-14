@@ -43,6 +43,78 @@ function validateBase64(section_id, value) {
 	return true;
 }
 
+function validateUnsignedIntegerRange(section_id, value, max) {
+	if (value == null || value.length == 0)
+		return true;
+
+	var match = value.match(/^(\d+)(?:-(\d+))?$/);
+	if (!match)
+		return _('Expected a number or an ascending range (for example 15-30)');
+
+	var lower = Number(match[1]),
+	    upper = Number(match[2] || match[1]);
+
+	if (!Number.isSafeInteger(lower) || !Number.isSafeInteger(upper) ||
+	    lower > upper || upper > max)
+		return _('Range values must be between 0 and %d').format(max);
+
+	return true;
+}
+
+function validateUint16Range(section_id, value) {
+	return validateUnsignedIntegerRange(section_id, value, 65535);
+}
+
+function validateUint32Range(section_id, value) {
+	return validateUnsignedIntegerRange(section_id, value, 4294967295);
+}
+
+function validateAwgBoolean(section_id, value) {
+	if (value == null || value.length == 0)
+		return true;
+
+	if (!value.match(/^(?:on|off|\d+)$/i))
+		return _('Expected "on", "off", or a non-negative integer');
+
+	return true;
+}
+
+function copyText(text) {
+	if (navigator.clipboard && navigator.clipboard.writeText)
+		return navigator.clipboard.writeText(text);
+
+	return new Promise(function(resolve, reject) {
+		var area = document.createElement('textarea');
+		area.value = text;
+		area.style.position = 'fixed';
+		area.style.top = '-1000px';
+		document.body.appendChild(area);
+		area.select();
+		try {
+			if (document.execCommand('copy'))
+				resolve();
+			else
+				reject();
+		} catch (e) {
+			reject(e);
+		} finally {
+			document.body.removeChild(area);
+		}
+	});
+}
+
+function downloadText(text, filename) {
+	var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+	var url = URL.createObjectURL(blob);
+	var a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(url);
+}
+
 var stubValidator = {
 	factory: validation,
 	apply: function(type, value, args) {
@@ -297,28 +369,56 @@ return network.registerProtocol('amneziawg', {
         o.datatype = 'string';
         o.optional = true;
 
+		o = s.taboption('amneziawg', form.Value, 'awg_header_protection_key', _('Header Protection Key'), _('AWG 3.x. Base64 key used to protect packet headers. The same key is required on both sides; S1-S4 must each be at least 12.'));
+		o.password = true;
+		o.optional = true;
+		o.validate = function(section_id, value) {
+			var result = validateBase64(section_id, value);
+			if (result !== true || !value)
+				return result;
+
+			var paddingOptions = [ 'awg_s1', 'awg_s2', 'awg_s3', 'awg_s4' ];
+			for (var i = 0; i < paddingOptions.length; i++) {
+				var padding = s.formvalue(section_id, paddingOptions[i]) ||
+					uci.get('network', section_id, paddingOptions[i]);
+
+				if (!padding || !padding.match(/^\d+$/) || Number(padding) < 12)
+					return _('Header protection requires S1, S2, S3 and S4 to be at least 12');
+			}
+			return true;
+		};
+
+		o = s.taboption('amneziawg', form.Button, '_gen_header_protection_key', _('Generate Header Protection Key'));
+		o.inputtitle = _('Generate key');
+		o.inputstyle = 'apply';
+		o.onclick = function(ev, section_id) {
+			return generateKey().then(function(keypair) {
+				s.getOption('awg_header_protection_key').getUIElement(section_id).setValue(keypair.priv);
+			});
+		};
+
 		o = s.taboption('amneziawg', form.Value, 'awg_contentpaddingaddition', _('ContentPaddingAddition'), _('AWG 3.0 content padding range or count (e.g. 43-77).'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Value, 'awg_rekeyaftertime', _('RekeyAfterTime'), _('AWG 3.0 rekey interval in seconds or range (e.g. 51-129).'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Value, 'awg_rekeytimeout', _('RekeyTimeout'), _('AWG 3.0 rekey timeout in seconds or range.'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Value, 'awg_rejectaftertime', _('RejectAfterTime'), _('AWG 3.0 reject after time in seconds or range.'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Value, 'awg_keepalivetimeout', _('KeepaliveTimeout'), _('AWG 3.0 keepalive timeout in seconds or range.'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Value, 'awg_maxhandshakeattempts', _('MaxHandshakeAttempts'), _('AWG 3.0 maximum handshake attempts or range.'));
-		o.datatype = 'string';
+		o.validate = validateUint16Range;
 		o.optional = true;
 
 		o = s.taboption('amneziawg', form.Flag, 'awg_randomtrailers', _('RandomTrailers'), _('AWG 3.1 enable random trailers.'));
@@ -450,8 +550,20 @@ return network.registerProtocol('amneziawg', {
 				if (pconf.peer_persistentkeepalive == 'off' || pconf.peer_persistentkeepalive == '0')
 					delete pconf.peer_persistentkeepalive;
 
-				if (!stubValidator.apply('port', pconf.peer_persistentkeepalive || '0'))
+				if (validateUint16Range(null, pconf.peer_persistentkeepalive || '0') !== true)
 					return _('PersistentKeepAlive setting is invalid');
+			}
+
+			if (config.interface_headerprotectionkey || config.interface_header_protection_key) {
+				var hpk = config.interface_headerprotectionkey || config.interface_header_protection_key;
+				if (validateBase64(null, hpk) !== true)
+					return _('HeaderProtectionKey setting is invalid');
+
+				var paddingSettings = [ 'interface_s1', 'interface_s2', 'interface_s3', 'interface_s4' ];
+				for (var i = 0; i < paddingSettings.length; i++)
+					if (!config[paddingSettings[i]] || !config[paddingSettings[i]].match(/^\d+$/) ||
+					    Number(config[paddingSettings[i]]) < 12)
+						return _('Header protection requires S1, S2, S3 and S4 to be at least 12');
 			}
 
 			return config;
@@ -496,14 +608,17 @@ return network.registerProtocol('amneziawg', {
 					s.getOption('awg_i3').getUIElement(s.section).setValue(config.interface_i3 || '');
 					s.getOption('awg_i4').getUIElement(s.section).setValue(config.interface_i4 || '');
 					s.getOption('awg_i5').getUIElement(s.section).setValue(config.interface_i5 || '');
-					s.getOption('awg_contentpaddingaddition').getUIElement(s.section).setValue(config.interface_contentpaddingaddition || '');
-					s.getOption('awg_rekeyaftertime').getUIElement(s.section).setValue(config.interface_rekeyaftertime || '');
-					s.getOption('awg_rekeytimeout').getUIElement(s.section).setValue(config.interface_rekeytimeout || '');
-					s.getOption('awg_rejectaftertime').getUIElement(s.section).setValue(config.interface_rejectaftertime || '');
-					s.getOption('awg_keepalivetimeout').getUIElement(s.section).setValue(config.interface_keepalivetimeout || '');
-					s.getOption('awg_maxhandshakeattempts').getUIElement(s.section).setValue(config.interface_maxhandshakeattempts || '');
-					s.getOption('awg_randomtrailers').getUIElement(s.section).setValue(config.interface_randomtrailers == 'on' || config.interface_randomtrailers == '1' ? '1' : '0');
-					s.getOption('awg_disablecookies').getUIElement(s.section).setValue(config.interface_disablecookies == 'on' || config.interface_disablecookies == '1' ? '1' : '0');
+					s.getOption('awg_header_protection_key').getUIElement(s.section).setValue(config.interface_headerprotectionkey || config.interface_header_protection_key || '');
+					s.getOption('awg_contentpaddingaddition').getUIElement(s.section).setValue(config.interface_contentpaddingaddition || config.interface_content_padding_addition || '');
+					s.getOption('awg_rekeyaftertime').getUIElement(s.section).setValue(config.interface_rekeyaftertime || config.interface_rekey_after_time || '');
+					s.getOption('awg_rekeytimeout').getUIElement(s.section).setValue(config.interface_rekeytimeout || config.interface_rekey_timeout || '');
+					s.getOption('awg_rejectaftertime').getUIElement(s.section).setValue(config.interface_rejectaftertime || config.interface_reject_after_time || '');
+					s.getOption('awg_keepalivetimeout').getUIElement(s.section).setValue(config.interface_keepalivetimeout || config.interface_keepalive_timeout || '');
+					s.getOption('awg_maxhandshakeattempts').getUIElement(s.section).setValue(config.interface_maxhandshakeattempts || config.interface_max_handshake_attempts || '');
+					var randTrail = config.interface_randomtrailers || config.interface_random_trailers;
+					s.getOption('awg_randomtrailers').getUIElement(s.section).setValue(randTrail == 'on' || randTrail == '1' ? '1' : '0');
+					var disCook = config.interface_disablecookies || config.interface_disable_cookies;
+					s.getOption('awg_disablecookies').getUIElement(s.section).setValue(disCook == 'on' || disCook == '1' ? '1' : '0');
 
 					if (config.interface_dns)
 						s.getOption('dns').getUIElement(s.section).setValue(config.interface_dns);
@@ -830,9 +945,9 @@ return network.registerProtocol('amneziawg', {
 		o.placeholder = '51820';
 		o.datatype = 'port';
 
-		o = ss.option(form.Value, 'persistent_keepalive', _('Persistent Keep Alive'), _('Optional. Seconds between keep alive messages. Default is 0 (disabled). Recommended value if this device is behind a NAT is 25.'));
+		o = ss.option(form.Value, 'persistent_keepalive', _('Persistent Keep Alive'), _('Optional. Seconds between keep alive messages. AWG 3.x accepts a range such as 20-30. Default is 0 (disabled). Recommended value if this device is behind a NAT is 25.'));
 		o.modalonly = true;
-		o.datatype = 'range(0,65535)';
+		o.validate = validateUint16Range;
 		o.placeholder = '0';
 
 
@@ -861,6 +976,15 @@ return network.registerProtocol('amneziawg', {
 				i3 = s.formvalue(s.section, 'awg_i3'),
 				i4 = s.formvalue(s.section, 'awg_i4'),
 				i5 = s.formvalue(s.section, 'awg_i5'),
+				hpk = s.formvalue(s.section, 'awg_header_protection_key') || s.formvalue(s.section, 'awg_headerprotectionkey'),
+				cpa = s.formvalue(s.section, 'awg_contentpaddingaddition') || s.formvalue(s.section, 'awg_content_padding_addition'),
+				rat = s.formvalue(s.section, 'awg_rekeyaftertime') || s.formvalue(s.section, 'awg_rekey_after_time'),
+				rto = s.formvalue(s.section, 'awg_rekeytimeout') || s.formvalue(s.section, 'awg_rekey_timeout'),
+				rja = s.formvalue(s.section, 'awg_rejectaftertime') || s.formvalue(s.section, 'awg_reject_after_time'),
+				kto = s.formvalue(s.section, 'awg_keepalivetimeout') || s.formvalue(s.section, 'awg_keepalive_timeout'),
+				mha = s.formvalue(s.section, 'awg_maxhandshakeattempts') || s.formvalue(s.section, 'awg_max_handshake_attempts'),
+				rt = s.formvalue(s.section, 'awg_randomtrailers') || s.formvalue(s.section, 'awg_random_trailers'),
+				dc = s.formvalue(s.section, 'awg_disablecookies') || s.formvalue(s.section, 'awg_disable_cookies'),
 			    prv = this.section.formvalue(section_id, 'private_key'),
 			    psk = this.section.formvalue(section_id, 'preshared_key'),
 			    eport = this.section.formvalue(section_id, 'endpoint_port'),
@@ -893,6 +1017,15 @@ return network.registerProtocol('amneziawg', {
 				i3 ? 'I3 = ' + i3 : '# I3 not defined',
 				i4 ? 'I4 = ' + i4 : '# I4 not defined',
 				i5 ? 'I5 = ' + i5 : '# I5 not defined',
+				hpk ? 'HeaderProtectionKey = ' + hpk : '# HeaderProtectionKey not defined',
+				cpa ? 'ContentPaddingAddition = ' + cpa : '# ContentPaddingAddition not defined',
+				rat ? 'RekeyAfterTime = ' + rat : '# RekeyAfterTime not defined',
+				rto ? 'RekeyTimeout = ' + rto : '# RekeyTimeout not defined',
+				rja ? 'RejectAfterTime = ' + rja : '# RejectAfterTime not defined',
+				kto ? 'KeepaliveTimeout = ' + kto : '# KeepaliveTimeout not defined',
+				mha ? 'MaxHandshakeAttempts = ' + mha : '# MaxHandshakeAttempts not defined',
+				rt != null && rt != '' && rt != '0' ? 'RandomTrailers = 1' : '# RandomTrailers not defined',
+				dc != null && dc != '' && dc != '0' ? 'DisableCookies = 1' : '# DisableCookies not defined',
 				'',
 				'[Peer]',
 				'PublicKey = ' + pub,
@@ -998,30 +1131,59 @@ return network.registerProtocol('amneziawg', {
 					var peer_config = configGenerator(hostnames[0], ips, eips, dns);
 
 					var node = E('div', {
-						'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:.5em;width:100%'
+						'style': 'display:flex;flex-direction:column;gap:.75em;width:100%'
 					}, [
 						E('div', {
-							'class': 'qr-code',
-							'style': 'text-align:center'
+							'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:.75em;width:100%'
 						}, [
-							E('em', { 'class': 'spinning' }, [ _('Generating QR code…') ])
+							E('div', {
+								'class': 'qr-code',
+								'style': 'text-align:center;min-width:200px'
+							}, [
+								E('em', { 'class': 'spinning' }, [ _('Generating QR code…') ])
+							]),
+							E('pre', {
+								'class': 'client-config',
+								'style': 'flex:1;min-height:180px;white-space:pre;overflow:auto',
+								'click': function(ev) {
+									var sel = window.getSelection(),
+									    range = document.createRange();
+
+									range.selectNodeContents(ev.currentTarget);
+
+									sel.removeAllRanges();
+									sel.addRange(range);
+								}
+							}, [ peer_config ])
 						]),
-						E('pre', {
-							'class': 'client-config',
-							'style': 'flex:1;white-space:pre;overflow:auto',
-							'click': function(ev) {
-								var sel = window.getSelection(),
-								    range = document.createRange();
+						E('div', { 'style': 'display:flex;gap:.5em;justify-content:flex-end' }, [
+							E('button', {
+								'class': 'btn cbi-button cbi-button-action',
+								'type': 'button',
+								'click': function(ev) {
+									var button = ev.currentTarget,
+									    original = button.textContent,
+									    config = node.querySelector('.client-config').textContent;
 
-								range.selectNodeContents(ev.currentTarget);
-
-								sel.removeAllRanges();
-								sel.addRange(range);
-							}
-						}, [ peer_config ])
+									return copyText(config).then(function() {
+										button.textContent = _('Copied');
+										window.setTimeout(function() { button.textContent = original; }, 1500);
+									}, function() {
+										ui.addNotification(null, E('p', [ _('Unable to copy the configuration.') ]), 'error');
+									});
+								}
+							}, [ _('Copy configuration') ]),
+							E('button', {
+								'class': 'btn cbi-button',
+								'type': 'button',
+								'click': function() {
+									downloadText(node.querySelector('.client-config').textContent, (s.section || 'amneziawg') + '-peer.conf');
+								}
+							}, [ _('Download .conf') ])
+						])
 					]);
 
-					buildSVGQRCode(peer_config, node.firstChild);
+					buildSVGQRCode(peer_config, node.querySelector('.qr-code'));
 
 					return node;
 				};
