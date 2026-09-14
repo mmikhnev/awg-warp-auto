@@ -948,10 +948,6 @@ const methods = {
 				status.load(AUTO_CONFIG);
 				if (status.get(AUTO_CONFIG, AUTO_MAIN, 'bootstrap_state') == 'running')
 					return failure('Initial WARP setup is already running');
-				const target = targetInterface();
-				const topology = interfaceTopology(target);
-				if (topology.state == 'present') return failure(`${target} already exists; use the pool controls instead`);
-				if (topology.state == 'partial') return failure(`${target} configuration is incomplete; repair it before creating a new interface`);
 				/* A requested bootstrap owns the first activation. Stop any pre-enabled
 				 * daemon before it can race this foreground setup job. */
 				command('/etc/init.d/awg-warp-auto stop >/dev/null 2>&1');

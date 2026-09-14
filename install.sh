@@ -97,15 +97,18 @@ if [ "$ACTION" = "uninstall" ]; then
 		for peer in $(uci -q show network | grep '=amneziawg_' | cut -d. -f2 | cut -d= -f1); do
 			uci -q delete "network.$peer" || true
 		done
-	else
 		# Безопасное удаление только YTwarp
 		warp_iface=$(uci -q get awg-warp-auto.main.interface || echo "YTwarp")
 		ifdown "$warp_iface" 2>/dev/null || true
+		ip link del dev "$warp_iface" 2>/dev/null || true
 		uci -q delete "network.$warp_iface" || true
 		uci -q delete "network.${warp_iface}_ipv4_egress" || true
 		uci -q delete "network.${warp_iface}_ipv4_mark" || true
 		for r in $(uci -q show network | grep "\.interface='$warp_iface'" | cut -d. -f2 | cut -d= -f1); do
 			uci -q delete "network.$r" || true
+		done
+		for peer in $(uci -q show network 2>/dev/null | grep -E "=amneziawg_${warp_iface}\$|warp_auto_peer_" | cut -d. -f2 | cut -d= -f1); do
+			uci -q delete "network.$peer" || true
 		done
 		uci -q delete "network.amneziawg_${warp_iface}" || true
 	fi

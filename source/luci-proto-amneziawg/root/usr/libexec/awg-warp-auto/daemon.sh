@@ -824,15 +824,8 @@ refresh_unlocked() {
 }
 
 bootstrap_unlocked() {
-	local has_interface=0 has_peer=0 id iface
+	local id iface
 	iface=$(interface_name)
-	uci -q show "network.$iface" >/dev/null 2>&1 && has_interface=1
-	uci -q show network 2>/dev/null | grep -q "=amneziawg_$iface$" && has_peer=1
-	case "$has_interface:$has_peer" in
-		0:0) ;;
-		1:1) set_bootstrap_state failed already_exists; log "bootstrap refused: $iface already exists"; return 3 ;;
-		*) set_bootstrap_state failed partial_configuration; log "bootstrap refused: partial $iface configuration"; return 3 ;;
-	esac
 
 	for binary in awg curl ucode resolveip; do
 		command -v "$binary" >/dev/null 2>&1 || { set_bootstrap_state failed missing_runtime; log "bootstrap refused: missing $binary"; return 4; }
@@ -840,7 +833,7 @@ bootstrap_unlocked() {
 	[ -e /lib/netifd/proto/amneziawg.sh ] || { set_bootstrap_state failed missing_runtime; log 'bootstrap refused: AmneziaWG netifd protocol is missing'; return 4; }
 
 	set_bootstrap_state running
-	log 'bootstrap requested: fetching and testing a first WARP profile'
+	log "bootstrap requested: configuring $iface with working WARP profile"
 	if [ "$(ready_count)" -eq 0 ]; then
 		if [ "$(provider_name)" = native ]; then
 			native_replenish 1 1 || true
